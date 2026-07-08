@@ -15,8 +15,47 @@ data once you've downloaded it.
 
 ```
 python experiments/run_comparison.py     # trains all 7 models, evaluates 10 scenarios, ~40s
-pytest                                    # 34 tests
+pytest                                    # 42 tests
 ```
+
+---
+
+## Key findings
+
+All numbers are on **synthetic MPD** (see the scope note below) and are grounded in the
+CSVs under `results/`. Full write-up in **[`REPORT.md`](REPORT.md)**.
+
+1. **The two-stage hybrid wins overall** — R-precision **0.357 ± 0.009** over three data
+   seeds, ahead of ALS (0.347) and item-CF (0.346), reproducing the "candidate
+   generation + learned rerank" recipe that dominated the real 2018 challenge.
+2. **A scenario-aware routed hybrid tops the entire suite at 0.379** (vs 0.355 for the
+   plain hybrid): routing cold-start queries to the title specialist recovers
+   `title_only` completely (**0.284 → 0.461**) with **no scenario regressing** (+0.024
+   overall).
+3. **The title model is indispensable for the cold start** — **0.474** R-precision on
+   `title_only` where every other standalone model is pinned at the popularity floor
+   (0.193), because they have no seed tracks to work with.
+4. **The Taste Engine's accuracy is collaborative filtering, not its axes** — pure
+   axis-matching scores only **0.122** R-precision (below the 0.162 popularity floor),
+   and dropping any single interpretable axis moves R-precision by at most **±0.003**.
+   The axes earn their keep as *explanations* and as flavor clusters (Adjusted Rand Index
+   peaks at **0.98** for k=3), not as ranking signal.
+5. **Track2Vec is mis-designed, not undertrained** — more epochs make it monotonically
+   *worse* (**0.182 → 0.099** from 5 to 40 epochs); only a wider context window helps.
+   Its flaw is the mean-pooled-centroid retrieval, not the training budget.
+6. **ALS benefits most from denser data** (**+0.014** R-precision from 2k → 20k playlists
+   at a fixed catalogue), and the **hybrid dominates every popularity bucket** (head,
+   torso, tail) at ~100% catalog coverage while popularity touches only **16%**.
+
+**Explore it:** research write-up in **[`REPORT.md`](REPORT.md)** · interactive tours in
+**[`notebooks/`](notebooks/)** (`01_demo.ipynb` — the Taste Engine end-to-end;
+`02_experiments.ipynb` — the full analysis re-rendered) · all figures consolidated in
+**[`visualizations/`](visualizations/)**.
+
+> **Scope.** Everything runs on a seeded *synthetic* MPD generator (the real dataset is
+> AIcrowd-gated). Synthetic numbers are for *relative* model comparison and design
+> validation, not comparable to the real leaderboard; a real-data run will slot its own
+> results into `REPORT.md`.
 
 ---
 
@@ -263,14 +302,16 @@ and **ALS benefits most from denser data**.
 ```
 playlist-continuation/
 ├── pyproject.toml
-├── README.md · RESULTS.md
+├── README.md · REPORT.md · RESULTS.md · ABLATIONS.md
 ├── src/playlistcont/
 │   ├── data/        schema.py · loader.py (real MPD) · synthetic.py
-│   ├── challenge/   metrics.py · scenarios.py · submission.py
-│   └── models/      base.py · popularity · itemcf · mf · track2vec · title_model · hybrid · taste_engine
-├── experiments/run_comparison.py
-├── results/         results.csv · results.md · figures/*.png
-└── tests/           metrics · loader · submission · recommenders · taste_engine (+ fixture)
+│   ├── challenge/   metrics.py · scenarios.py · submission.py · coverage.py
+│   └── models/      base.py · popularity · itemcf · mf · track2vec · title_model · hybrid · routed · taste_engine
+├── experiments/     run_comparison.py · run_all.py · exp_*.py (ablations)
+├── notebooks/       01_demo.ipynb · 02_experiments.ipynb (executed)
+├── visualizations/  all figures consolidated (results + ablations + notebook plots)
+├── results/         results.csv · results.md · figures/ · ablations/*.csv · ablations/figures/
+└── tests/           metrics · loader · submission · recommenders · taste_engine · ablations (42 tests)
 ```
 
 ## Install
