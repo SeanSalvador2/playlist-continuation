@@ -1,0 +1,36 @@
+{
+  "info": {
+    "generated_on": "2024-01-01",
+    "slice": "0-1",
+    "version": "v1"
+  },
+  "playlists": [
+    {
+      "name": "Throwback",
+      "collaborative": "false",
+      "pid": 0,
+      "modified_at": 1493424000,
+      "num_tracks": 3,
+      "num_albums": 3,
+      "num_followers": 1,
+      "tracks": [
+        {"pos": 0, "artist_name": "Artist A", "track_uri": "spotify:track:t0", "artist_uri": "spotify:artist:a0", "track_name": "Song0", "album_uri": "spotify:album:al0", "album_name": "Alb0", "duration_ms": 200000},
+        {"pos": 1, "artist_name": "Artist B", "track_uri": "spotify:track:t1", "artist_uri": "spotify:artist:a1", "track_name": "Song1", "album_uri": "spotify:album:al1", "album_name": "Alb1", "duration_ms": 210000},
+        {"pos": 2, "artist_name": "Artist A", "track_uri": "spotify:track:t2", "artist_uri": "spotify:artist:a0", "track_name": "Song2", "album_uri": "spotify:album:al2", "album_name": "Alb2", "duration_ms": 190000}
+      ]
+    },
+    {
+      "name": "chill vibes",
+      "collaborative": "false",
+      "pid": 1,
+      "modified_at": 1506556800,
+      "num_tracks": 2,
+      "num_albums": 2,
+      "num_followers": 4,
+      "tracks": [
+        {"pos": 0, "artist_name": "Artist B", "track_uri": "spotify:track:t1", "artist_uri": "spotify:artist:a1", "track_name": "Song1", "album_uri": "spotify:album:al1", "album_name": "Alb1", "duration_ms": 210000},
+        {"pos": 1, "artist_name": "Artist C", "track_uri": "spotify:track:t3", "artist_uri": "spotify:artist:a2", "track_name": "Song3", "album_uri": "spotify:album:al3", "album_name": "Alb3", "duration_ms": 205000}
+      ]
+    }
+  ]
+}

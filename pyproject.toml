@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "playlistcont"
+version = "0.1.0"
+description = "Spotify Million Playlist Dataset (RecSys 2018) playlist-continuation: a comparison of recommenders plus an interpretable taste engine."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Sean Salvador" }]
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-learn>=1.2",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "gensim>=4.3",
+]
+
+[project.optional-dependencies]
+# These accelerate two of the models but the package degrades gracefully
+# to pure-numpy / logistic-regression fallbacks if they are missing.
+fast = ["implicit>=0.7", "lightgbm>=4.0"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
