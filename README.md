@@ -220,6 +220,24 @@ indispensable for the title-only cold start** (0.474 vs a 0.193 floor); simple
 little recall for full interpretability**. (These are synthetic-data numbers —
 good for relative comparison, not comparable to the real leaderboard.)
 
+### Deep-dive experiments and ablations
+
+For the full research study — per-model hyperparameter sweeps, the taste-engine
+ablations (stated-vs-learned trust curves, an adversarial "wrong preferences"
+rescue, axis and flavor-count ablations), ensemble leave-one-out, a
+scenario-aware **routed hybrid** that fixes the title-only failure (+0.024
+overall), and robustness (3-seed error bars, data-scale, popularity-bias /
+coverage / diversity) — see **[`ABLATIONS.md`](ABLATIONS.md)**. All of it is
+reproducible via `python experiments/run_all.py` (~30 min); scripts in
+[`experiments/`](experiments/), outputs in
+[`results/ablations/`](results/ablations/).
+
+Selected results: a **routed hybrid** tops the suite at **0.379** overall
+R-precision (vs 0.357 for the plain hybrid); **track2vec gets worse with more
+epochs** (undertraining was the wrong diagnosis); the taste engine's accuracy is
+**collaborative filtering, not its axes** (pure axis-match scores only 0.122);
+and **ALS benefits most from denser data**.
+
 ---
 
 ## Running on the real MPD
