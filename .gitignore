@@ -9,3 +9,15 @@ dist/
 data/mpd.slice.*.json
 # real-data run: downloads, checkpoints, large artifacts (never committed)
 .data/
+
+# Taste Atlas app (app/) — React frontend build tooling
+node_modules/
+app/frontend/node_modules/
+app/frontend/test-results/
+app/frontend/playwright-report/
+app/frontend/.vite/
+*.tsbuildinfo
+# ...but DO ship the built dashboard bundle (small) so `playlistcont dashboard`
+# runs out of the box. Re-included over the global dist/ ignore above.
+!/app/frontend/dist/
+!/app/frontend/dist/**

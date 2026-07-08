@@ -1,0 +1,1 @@
+"""Taste Atlas FastAPI backend."""

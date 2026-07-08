@@ -24,6 +24,11 @@ dependencies = [
 # to pure-numpy / logistic-regression fallbacks if they are missing.
 fast = ["implicit>=0.7", "lightgbm>=4.0"]
 dev = ["pytest>=7.0"]
+# The Taste Atlas dashboard (`playlistcont dashboard`).
+app = ["fastapi>=0.110", "uvicorn>=0.27"]
+
+[project.scripts]
+playlistcont = "playlistcont.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
