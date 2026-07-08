@@ -16,6 +16,7 @@ data once you've downloaded it.
 ```
 python experiments/run_comparison.py     # trains all 7 models, evaluates 10 scenarios, ~40s
 pytest                                    # 49 tests
+playlistcont dashboard                    # Taste Atlas — the interactive app (see below)
 ```
 
 ---
@@ -98,6 +99,54 @@ policy) and validated with the challenge's own `verify_submission.py`. Context: 
 winner scored R-precision ≈ 0.2241 on the *official* test; our internal 0.148 is on a
 held-out split of the *public* MPD (smaller training set, different holdouts) and is not
 directly comparable.
+
+---
+
+## Interactive App — Taste Atlas
+
+A local web app that makes the Taste Engine's "distill people's flavors" vision tangible —
+and doubles as the project's results dashboard. Fully self-contained: on startup it
+generates a seeded synthetic MPD and fits the Taste Engine + item-CF + popularity in
+memory (a few seconds, zero downloads).
+
+```
+pip install -e ".[app]"        # fastapi + uvicorn
+playlistcont dashboard         # builds models, serves http://127.0.0.1:8000
+```
+
+(Dev mode: `python -m uvicorn app.backend.server:app` for the API on :8000 and
+`npm install && npm run dev` in `app/frontend/` for hot reload; a built bundle is
+committed in `app/frontend/dist/` so the CLI works with no npm step.)
+
+Three views:
+
+- **Taste Lab** — stated-preference sliders on the interpretable axes plus genre chips, a
+  trust dial (stated ↔ learned), a live *taste map* whose contour "territories" are the
+  named flavor clusters, and a recommendation list where every item shows its WHY: signed
+  axis-match bars, co-occurrence evidence chips, and the flavor it fits. Moving any slider
+  re-ranks live.
+
+![Taste Lab](app/screenshots/01-taste-lab.png)
+
+  Every recommendation is explained — axis contributions, CF evidence, flavor match:
+
+![Explanation chips](app/screenshots/02-explanation-chips.png)
+
+- **Personas** — one click loads "slow sad country / gym rap / indie chill", compares its
+  stated axes against the weights learned from its tracks, and runs the adversarial demo:
+  feed a persona deliberately *wrong* stated preferences and drag the trust dial to watch
+  recommendations collapse (100% trust in wrong prefs → 0% on-taste) and recover.
+
+![Personas — the adversarial rescue](app/screenshots/04-personas-adversarial.png)
+
+- **Results Explorer** — the committed CSVs under `results/` + `results/real/` rendered as
+  charts: the synthetic-vs-real headline comparison (item-CF's 0.148 win on real data),
+  the per-scenario heatmap, the taste-engine trust ablation curves, and the
+  held / didn't-hold verdict table.
+
+Backend tests live in `app/tests/` (pytest); e2e + axe-core accessibility tests in
+`app/frontend/e2e/` (Playwright). More screenshots in [`app/screenshots/`](app/screenshots/)
+and [`visualizations/`](visualizations/).
 
 ---
 

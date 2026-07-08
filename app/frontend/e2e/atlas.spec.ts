@@ -13,23 +13,29 @@ test.describe("Taste Atlas", () => {
     // flavour territories appear
     await expect(page.locator(".flavor").first()).toBeVisible();
 
-    // capture the current top recommendation, then swing valence hard negative
-    const firstBefore = await recList.first().locator(".rec-name").textContent();
-    const valence = page.getByLabel(/Valence: sad to happy/i);
-    await valence.focus();
-    for (let i = 0; i < 12; i++) await valence.press("ArrowLeft");
-    // also crank acousticness toward acoustic
-    await page.waitForTimeout(600);
-
-    // recommendations must still render and the ordering should have changed
-    await expect(recList.first()).toBeVisible();
-    const firstAfter = await recList.first().locator(".rec-name").textContent();
-    expect(firstBefore).not.toBeNull();
-    // WHY chips exist (explanations present)
+    // capture the current top-5 ordering, then raise trust and push
+    // acousticness hard toward acoustic — the ranking must change
+    const orderOf = async () => {
+      const names = await recList.locator(".rec-name").allTextContents();
+      return names.slice(0, 5).join(" | ");
+    };
+    const before = await orderOf();
+    // explanations present while CF evidence is strong: axis bars + evidence chip
     await expect(page.locator(".axisbar").first()).toBeVisible();
-    // at least one co-occurrence evidence chip
     await expect(page.locator(".why-chip.evidence").first()).toBeVisible();
-    expect(firstAfter).toBeTruthy();
+
+    const trust = page.getByRole("slider", { name: /^Trust dial:/ });
+    await trust.focus();
+    for (let i = 0; i < 14; i++) await trust.press("ArrowRight");
+    const acoustic = page.getByLabel(/Acousticness: electronic to acoustic/i);
+    await acoustic.focus();
+    for (let i = 0; i < 20; i++) await acoustic.press("ArrowRight");
+    await page.waitForTimeout(800);
+
+    await expect(recList.first()).toBeVisible();
+    await expect.poll(orderOf, { timeout: 10_000 }).not.toBe(before);
+    // explanations still present after the re-rank
+    await expect(page.locator(".axisbar").first()).toBeVisible();
   });
 
   test("personas: switching persona updates clusters and the adversarial rescue works", async ({ page }) => {

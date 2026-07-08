@@ -1,0 +1,11 @@
+node_modules/
+.vite/
+test-results/
+playwright-report/
+*.local
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+# NOTE: dist/ is intentionally NOT ignored here — the built bundle is small
+# (~590 KB) and is committed so `playlistcont dashboard` works without an
+# npm build. (The repo-root .gitignore re-includes app/frontend/dist.)
