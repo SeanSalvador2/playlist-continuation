@@ -28,7 +28,7 @@ class ItemCFRecommender(Recommender):
 
     def __init__(self, normalization: str = "cosine", topk_sim: int = 200,
                  shrink: float = 10.0):
-        assert normalization in ("cosine", "pmi")
+        assert normalization in ("cosine", "pmi", "raw")
         self.normalization = normalization
         self.topk_sim = topk_sim
         self.shrink = shrink
@@ -44,7 +44,10 @@ class ItemCFRecommender(Recommender):
         mask = r != c
         r, c, v = r[mask], c[mask], v[mask]
 
-        if self.normalization == "cosine":
+        if self.normalization == "raw":
+            # unnormalized co-occurrence counts (baseline: popularity-biased)
+            s = v
+        elif self.normalization == "cosine":
             denom = np.sqrt(pop[r] * pop[c]) + self.shrink
             s = v / denom
         else:  # pmi

@@ -40,11 +40,21 @@ class HybridRecommender(Recommender):
     name = "hybrid"
 
     def __init__(self, cand_per_model=400, n_train_playlists=800, seed=0,
-                 submodels: Optional[Dict[str, Recommender]] = None):
+                 submodels: Optional[Dict[str, Recommender]] = None,
+                 sources: Optional[Sequence[str]] = None,
+                 drop_features: Optional[Sequence[str]] = None,
+                 reranker: str = "auto"):
         self.cand_per_model = cand_per_model
         self.n_train_playlists = n_train_playlists
         self.seed = seed
         self._external = submodels  # allow sharing already-fit submodels
+        # which candidate-generation sources to union (default: all five).
+        self.sources = list(sources) if sources is not None else \
+            ["item_cf", "als", "track2vec", "title", "popularity"]
+        # feature columns to zero-out (feature ablation).
+        self.drop_features = list(drop_features) if drop_features else []
+        assert reranker in ("auto", "lightgbm", "logreg", "equal")
+        self.reranker = reranker
 
     # ------------------------------------------------------------------
     def fit(self, dataset: Dataset) -> "HybridRecommender":
@@ -65,6 +75,15 @@ class HybridRecommender(Recommender):
         self._pop_rank = np.argsort(-self.index.track_pop)
         self._pop_norm = self.index.track_pop / (self.index.track_pop.max() + 1e-9)
         self._w2v_wv = self.w2v.model.wv
+        # candidate-generation sources actually used (leave-one-out support)
+        source_map = {"item_cf": self.cf, "als": self.als, "track2vec": self.w2v,
+                      "title": self.title, "popularity": self.pop}
+        self._gen_sources = [source_map[s] for s in self.sources if s in source_map]
+        # feature mask (1 keep, 0 drop) for feature ablation
+        self._feat_mask = np.ones(len(FEATURES), np.float32)
+        for f in self.drop_features:
+            if f in FEATURES:
+                self._feat_mask[FEATURES.index(f)] = 0.0
         self._train_blender(dataset)
         return self
 
@@ -76,8 +95,8 @@ class HybridRecommender(Recommender):
         seed_artists = {self.artist_of.get(t) for t in seed_tracks}
 
         cand: set[int] = set()
-        # candidate generation from each source
-        for rec in (self.cf, self.als, self.w2v, self.title, self.pop):
+        # candidate generation from each (selected) source
+        for rec in self._gen_sources:
             uris = rec.recommend(seed_tracks, title, k=self.cand_per_model)
             cand.update(self.index.ids(uris))
         cand.difference_update(seed_set)
@@ -124,6 +143,9 @@ class HybridRecommender(Recommender):
                 cf_n[cid], als_n[cid], w2v_n[cid],
                 title_scores[cid], self._pop_norm[cid], artist_ov,
             ]
+        # feature ablation: zero-out dropped columns (consistent train+infer)
+        if self.drop_features:
+            feats = feats * self._feat_mask
         return cand_ids, feats
 
     # ------------------------------------------------------------------
@@ -160,8 +182,11 @@ class HybridRecommender(Recommender):
         y = np.concatenate(y_rows) if y_rows else np.zeros(0)
         self.blender_backend = "none"
         self._weights = np.ones(len(FEATURES), np.float32)  # fallback equal blend
-        if len(y) > 20 and y.sum() > 0 and y.sum() < len(y):
-            if _HAVE_LGB:
+        use_lgb = _HAVE_LGB if self.reranker == "auto" else (self.reranker == "lightgbm")
+        if self.reranker == "equal":
+            self.blender = None
+        elif len(y) > 20 and y.sum() > 0 and y.sum() < len(y):
+            if use_lgb and _HAVE_LGB:
                 self.blender = lgb.LGBMClassifier(
                     n_estimators=120, num_leaves=15, learning_rate=0.1,
                     min_child_samples=10, random_state=self.seed, verbose=-1,

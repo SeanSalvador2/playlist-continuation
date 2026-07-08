@@ -24,10 +24,13 @@ from .base import Recommender, TrackIndex
 class TitleModelRecommender(Recommender):
     name = "title"
 
-    def __init__(self, neighbours=50, ngram=(2, 5), min_title_len=1):
+    def __init__(self, neighbours=50, ngram=(2, 5), min_title_len=1,
+                 analyzer="char_wb"):
+        assert analyzer in ("char_wb", "char", "word")
         self.neighbours = neighbours
         self.ngram = ngram
         self.min_title_len = min_title_len
+        self.analyzer = analyzer
 
     def fit(self, dataset: Dataset) -> "TitleModelRecommender":
         self.index = TrackIndex(dataset)
@@ -37,7 +40,7 @@ class TitleModelRecommender(Recommender):
         # Fit only on titled playlists but keep row alignment via a safe token.
         corpus = [t if len(t) >= self.min_title_len else "\x00" for t in titles]
         self.vectorizer = TfidfVectorizer(
-            analyzer="char_wb", ngram_range=self.ngram, min_df=2
+            analyzer=self.analyzer, ngram_range=self.ngram, min_df=2
         )
         self.title_mat = self.vectorizer.fit_transform(corpus)  # playlists x features
         # precompute per-playlist track id lists
