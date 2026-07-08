@@ -7,3 +7,5 @@ build/
 dist/
 # real MPD data (never commit the gated dataset)
 data/mpd.slice.*.json
+# real-data run: downloads, checkpoints, large artifacts (never committed)
+.data/
