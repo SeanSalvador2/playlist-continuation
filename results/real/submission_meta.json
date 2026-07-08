@@ -1,0 +1,13 @@
+{
+  "model": "FastRouter(item_cf | title for cold-start)",
+  "n_corpus": 150000,
+  "min_count": 8,
+  "n_tracks": 120851,
+  "challenge_seed_coverage": 0.7703,
+  "gz_path": ".data/submission.csv.gz",
+  "gz_mb": 79.54,
+  "raw_mb": 185.09,
+  "validator_ok": true,
+  "n_playlists": 10000,
+  "runtime_s": 248.8
+}

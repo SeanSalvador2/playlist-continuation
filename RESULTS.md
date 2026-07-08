@@ -1,5 +1,10 @@
 # Results & analysis
 
+> **Looking for the real-data numbers?** These are the **synthetic-MPD** results.
+> The real 1M-playlist run (and which of these conclusions transferred) is in
+> **[`REAL_RESULTS.md`](REAL_RESULTS.md)**. Short version: on real data plain
+> **item-CF wins**, not the hybrid.
+
 All numbers below were produced by actually running
 `python experiments/run_comparison.py` in this repo on **synthetic MPD**
 (10,000 playlists, 5,000 tracks, 3,000 held-out playlists split into the 10

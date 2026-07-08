@@ -326,6 +326,43 @@ Holding the catalogue fixed at 3,500 tracks and growing only the playlist count 
 
 The popularity baseline is an echo chamber: perfect on head tracks, **zero tail recall, and it ever recommends only 16% of the catalogue**. Every learned model reaches ≈ 95–100% coverage. The **hybrid dominates every popularity bucket** (head, torso, and tail) while keeping full coverage and middle-of-the-pack diversity — it is not winning by chasing the head. The most tail-friendly models *relative to their head recall* are track2vec and the taste engine (both lean on content/axis structure rather than popularity), the silver lining for the two content models that lag on raw accuracy.
 
+### 4.10 Real-MPD run: what transferred?
+
+Everything in Sections 4.1–4.9 is on synthetic data. We then ran the identical harness on the **real** Million Playlist Dataset, streamed directly from the official 5.4 GB zip (**1,000,000 playlists, 66,346,428 interactions, 2,262,292 unique tracks**, mean length 66.3; verified in one streaming pass). The memory wall is the item-CF track–track co-occurrence $C^\top C$: measured at 344 M non-zeros for 150k playlists and 650 M for 300k, so a full-1M build (~2–4 B non-zeros, plus a transient CSR→COO copy) exceeds our 15 GB budget. **Popularity was therefore computed at full 1M scale; the neighbourhood/embedding/ensemble models were trained on a 150,000-playlist subsample** (120,851 tracks after min-count-8 pruning). 6,000 held-out real playlists were split into the ten scenarios (250 cases each). ALS used the `implicit` backend; the reranker was LightGBM.
+
+| Model | R-precision | NDCG | Clicks (↓) |
+|---|---|---|---|
+| **item_cf** | **0.148** | **0.292** | 5.69 |
+| hybrid | 0.131 | 0.277 | **5.10** |
+| routed_hybrid | 0.129 | 0.271 | 5.44 |
+| als | 0.113 | 0.226 | 8.07 |
+| title | 0.063 | 0.130 | 16.88 |
+| track2vec | 0.058 | 0.125 | 14.19 |
+| popularity | 0.027 | 0.072 | 21.70 |
+
+**The headline synthetic result did *not* transfer: on real data plain item-CF wins overall (0.148), ahead of the hybrid (0.131) and the routed hybrid (0.129).** Real playlist co-occurrence is a far stronger and less redundant signal than the synthetic archetypes produced, and the learned reranker — trained on limited rows without audio features — *dilutes* it rather than improving on it. This is itself the most important real-data finding, and it is consistent with the ablation observation that "more model is not always better" once co-occurrence is near-sufficient (Section 4.2). Which synthetic conclusions held:
+
+| Synthetic conclusion | Real verdict |
+|---|---|
+| Tier order hybrid > als > item-CF | **partial** — becomes item-CF > hybrid > als |
+| Hybrid ≥ ALS *and* item-CF overall | **did not hold** — item-CF wins |
+| Routed hybrid > plain hybrid overall | **did not hold** — routing net-neutral/slightly negative (−0.002) |
+| Title model owns the `title_only` cold start | **held** — title 0.076 vs 0.044 for the plain hybrid |
+| Routing recovers `title_only` (routed ≫ hybrid there) | **held** — routing lifts `title_only` 0.044 → 0.076 |
+| item-CF is top-tier on large random seeds | **held** — item-CF 0.246 wins `title_random_100` |
+| Track2Vec is the weakest model | **did not hold** — popularity is now weakest (0.027) |
+| Popularity is a strong *clicks* baseline | **did not hold** (as predicted) — clicks collapse to 21.7 |
+
+So the *architectural* lessons survived where they were about **division of labour** — the title model is indispensable at zero seeds, routing rescues that bucket, and co-occurrence owns long/random seeds — but the *ranking-order* lessons (ensemble supremacy, routing's net win, Track2Vec being worst) were partly artifacts of a generator too kind to the reranker and too harsh to popularity. The two most confident falsifiable predictions from the synthetic discussion — that popularity's flattering clicks would evaporate, and that item-CF would stay top-tier on random seeds — both held.
+
+**Leaderboard context.** The 2018 winner (vl6) scored R-precision ≈ 0.2241 on the *official* challenge test. Our 0.148 is on an *internal* held-out split of the public MPD, trained on only 15% of it, and is not a like-for-like number (different holdouts, smaller training set, no audio features). We also generated a valid `submission.csv.gz` for the real 10k challenge set (validated by the bundled `verify_submission.py`), whose graded score would be the comparable figure.
+
+### 4.11 Taste Engine on real audio features
+
+The real MPD carries no audio features. We joined a public Spotify audio-features table (`ozefe/spotify_audio_features`, 4 shards ≈ 100 M rows) onto the track_uris on the shared 22-char id (`tempo`→normalized, `energy`/`valence`/`acousticness` direct, `lyrical_depth`←$1-$instrumentalness proxy, genres unavailable → zero). Match rate against popular MPD tracks was ~44%, so the taste engine was evaluated on the feature-covered subset against reference models — see `REAL_RESULTS.md`. This is the direct test of the open question from Section 4.4: whether *real* audio axes carry more independent ranking signal than the synthetic ones did.
+
+![Real-MPD overall R-precision by model](visualizations/real_overall_summary.png)
+
 ---
 
 ## 5. Discussion

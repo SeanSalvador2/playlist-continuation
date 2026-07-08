@@ -404,6 +404,18 @@ silver lining for the two content models that lag on raw accuracy.
 
 ## What we would run on real MPD
 
+> **Update — the real-data run has been done.** The full comparison, an internal
+> held-out evaluation split into the ten scenarios, a real-audio-features taste
+> engine, and a validated AIcrowd submission all now live in
+> **[`REAL_RESULTS.md`](REAL_RESULTS.md)** (data streamed from the official 1M
+> zip; models trained on a 150k-playlist subsample because full-1M item-CF
+> co-occurrence does not fit 15 GB RAM). Headline transfer result: **item-CF
+> wins on real data** (the reranker dilutes an already-dominant co-occurrence
+> signal), while the title-model cold-start win and item-CF's random-seed
+> dominance both held, and popularity's flattering synthetic clicks collapsed as
+> predicted. The wishlist below is what a *deeper* real-data study would still
+> add.
+
 1. **Re-run every sweep on real slices** (start with 50-100k playlists) and check
    which synthetic artifacts survive - especially item-CF normalization
    (expect cosine/shrinkage to beat raw), ALS factor count (expect the optimum to

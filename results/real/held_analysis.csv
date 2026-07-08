@@ -1,0 +1,10 @@
+Synthetic conclusion,Synthetic,Real,Verdict
+Tier order (overall R-prec),hybrid > als > item_cf > title,item_cf > hybrid > als > title,partial
+Hybrid >= ALS and item-CF (overall R-prec),yes (0.322 vs 0.311/0.309),NO (0.131 vs 0.113/0.148),didn't hold
+Routed hybrid > plain hybrid (overall R-prec),"yes (+0.024, 0.379 vs 0.355)","NO (0.129 vs 0.131, -0.002)",didn't hold
+Title model dominates title_only cold start,yes (0.474 vs 0.193 floor),yes (title 0.076 vs next 0.044),held
+Routing recovers title_only (routed >> hybrid there),yes (0.169 -> 0.461),routed 0.076 vs hybrid 0.044,held
+item-CF top-tier on large random seeds (rand_100),yes (item_cf 0.468 wins),"item_cf 0.246, best=item_cf 0.246",held
+Track2Vec is the weakest model (overall R-prec),"yes (0.120, worst)",worst = popularity (0.027),didn't hold
+Taste engine ~ CF pack on R-prec (real audio features),yes (0.300 vs 0.309 item-CF),"taste 0.117 vs item-CF 0.133 on matched subset (near CF pack, 2nd overall)",held
+Popularity is a strong *clicks* baseline,"yes (0.21, synthetic artifact)",popularity clicks 21.70; best=hybrid 5.10,didn't hold

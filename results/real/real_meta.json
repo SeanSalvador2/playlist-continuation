@@ -1,0 +1,24 @@
+{
+  "n_corpus": 150000,
+  "min_count": 8,
+  "n_train": 143326,
+  "n_test": 6000,
+  "n_tracks_catalog": 120851,
+  "per_scenario": 250,
+  "als_factors": 128,
+  "als_iters": 15,
+  "seed": 1,
+  "k": 500,
+  "fit_times": {
+    "popularity": 6.1,
+    "item_cf": 47.2,
+    "als": 94.5,
+    "track2vec": 321.5,
+    "title": 10.2,
+    "hybrid": 234.8
+  },
+  "als_backend": "implicit",
+  "hybrid_reranker": "lightgbm",
+  "features_attached": false,
+  "runtime_s": 1593.9
+}

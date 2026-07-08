@@ -1,0 +1,11 @@
+{
+  "n_corpus": 150000,
+  "min_count": 3,
+  "match_rate": 0.4328,
+  "n_matched_tracks": 118084,
+  "n_catalog_before": 272832,
+  "subset_playlists": 149296,
+  "subset_tracks": 118084,
+  "per_scenario": 250,
+  "runtime_s": 668.3
+}

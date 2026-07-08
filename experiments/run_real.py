@@ -194,7 +194,7 @@ def main():
         from build_submission import generate_submission
         from playlistcont.challenge.submission import validate_submission
         log("Generating official submission with routed_hybrid...")
-        seed_cov = len(keep_uris & set(ds.tracks.keys())) / max(1, len(keep_uris))
+        seed_cov = len(challenge_uris & set(ds.tracks.keys())) / max(1, len(challenge_uris))
         log(f"  challenge seed-track catalogue coverage: {100*seed_cov:.1f}%")
         gz, seeds, n = generate_submission(
             routed, submodels["popularity"], ch, args.submission_out,

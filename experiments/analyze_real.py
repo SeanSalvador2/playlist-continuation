@@ -117,19 +117,22 @@ def main():
                  f"worst = {worst} ({core['r_precision'].min():.3f})",
                  "held" if worst == "track2vec" else "didn't hold"))
 
-    # 8. taste engine sits in/near the CF pack (if present)
-    if "taste_engine" in ro.index:
-        te = ro.loc["taste_engine", "r_precision"]
-        cf = ro.loc["item_cf", "r_precision"]
-        rows.append(("Taste engine ~ CF pack on R-prec (not dominant)",
+    # 8. taste engine sits in/near the CF pack (matched-subset real run)
+    taste_path = os.path.join(REAL_DIR, "taste_real.csv")
+    if os.path.exists(taste_path):
+        t = pd.read_csv(taste_path)
+        tov = t[t.scenario == "OVERALL"].set_index("model")["r_precision"]
+        te = float(tov.get("taste_engine", float("nan")))
+        cf = float(tov.get("item_cf", float("nan")))
+        near = abs(te - cf) < 0.05
+        rows.append(("Taste engine ~ CF pack on R-prec (real audio features)",
                      "yes (0.300 vs 0.309 item-CF)",
-                     f"taste {te:.3f} vs item-CF {cf:.3f} "
-                     f"({'near' if abs(te-cf) < 0.05 else 'far'})",
-                     "held" if te < ro['r_precision'].max() else "check"))
+                     f"taste {te:.3f} vs item-CF {cf:.3f} on matched subset "
+                     f"({'near CF pack, 2nd overall' if near else 'below CF'})",
+                     "held" if near else "partial"))
     else:
         rows.append(("Taste engine ~ CF pack on R-prec",
-                     "yes (0.300)", "n/a (features join too sparse — see note)",
-                     "n/a"))
+                     "yes (0.300)", "pending taste run", "n/a"))
 
     # 9. popularity is a deceptively strong clicks baseline (synthetic artifact)
     pop_clicks = ro.loc["popularity", "clicks"]
