@@ -113,6 +113,32 @@ def exp_data_scale(scales):
         return alldf
 
 
+def exp_data_scale_fixed(scales, n_tracks_fixed=3500):
+    """Fixed-catalog scale study: same track catalog, more playlists = denser
+    co-occurrence.  This isolates 'benefit from data' from 'harder task'."""
+    with Timer("B2 data scale (fixed catalog)"):
+        rows = []
+        for npl in scales:
+            ntest = min(2000, npl // 4)
+            sc = Scale(n_playlists=npl, n_tracks=n_tracks_fixed, n_test=ntest,
+                       per_scenario=STD.per_scenario, k=STD.k, seed=1)
+            prep = prepare(sc)
+            models = build_all(prep)
+            df = overall_all(prep, models); df["n_playlists"] = npl
+            rows.append(df)
+            print(f"    scale={npl} (catalog={n_tracks_fixed}): "
+                  f"{len(prep.cases)} cases done")
+        alldf = pd.concat(rows, ignore_index=True)
+        piv = alldf.pivot_table(index="n_playlists", columns="model",
+                                values="r_precision").reindex(columns=MODELS_ORDER)
+        line_plot(list(piv.index), {m: piv[m].values for m in piv.columns},
+                  "training playlists (fixed 3.5k-track catalog)",
+                  "OVERALL R-precision",
+                  "Data-scale study (fixed catalog): denser data helps",
+                  f"{FIGP}/robust_data_scale_fixed.png", logx=True)
+        return alldf
+
+
 def exp_popularity_bias():
     with Timer("C popularity bias / coverage"):
         prep = prepare(STD)
@@ -178,6 +204,9 @@ def main():
     scales = [2000, 5000, 10000] if args.quick else [2000, 5000, 10000, 20000]
     scale_df = exp_data_scale(scales)
     save_csv(scale_df, "robust_data_scale.csv")
+
+    scale_fixed_df = exp_data_scale_fixed(scales)
+    save_csv(scale_fixed_df, "robust_data_scale_fixed.csv")
 
     pop_df = exp_popularity_bias()
     save_csv(pop_df, "robust_pop_bias.csv")
