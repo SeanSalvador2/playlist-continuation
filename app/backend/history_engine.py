@@ -34,7 +34,7 @@ import threading
 from datetime import date, timedelta
 from typing import Optional
 
-from playlistcont.analytics import queries, stats
+from playlistcont.analytics import queries, stats, text2sql
 from playlistcont.dynamics import (
     build_eras, build_windows, compute_trajectory, gather_facts,
     recommended_detector, render_story,
@@ -279,6 +279,34 @@ class HistoryAtlas:
         if self._journey is None:
             self._build_journey()
         return self._journey
+
+    # ------------------------------------------------------------------ #
+    #  Phase 5: "ask your library" — templates + guarded free-form SQL
+    # ------------------------------------------------------------------ #
+    def ask_templates(self) -> dict:
+        """The keyless template library (ids, questions, typed slots, default SQL)."""
+        return {"templates": text2sql.list_templates(), "schema_card": text2sql.SCHEMA_CARD}
+
+    def ask_run_template(self, template_id: str, slots: Optional[dict] = None) -> dict:
+        """Build a template's SQL from validated slots and run it through the guardrail.
+
+        Raises :class:`text2sql.SlotError` on bad slots and
+        :class:`text2sql.GuardrailError` if the (generated) SQL is somehow rejected;
+        the server maps both to a 400.
+        """
+        with self._lock:
+            return text2sql.run_template(self.store, template_id, slots=slots or {})
+
+    def ask_sql(self, sql: str) -> dict:
+        """Run a raw power-user SELECT through the shared guardrail (:func:`safe_execute`).
+
+        The store is queried read-only: file-backed stores are reopened read-only, and
+        the in-memory app store relies on the read-only transaction + statement
+        validation inside :func:`text2sql.safe_execute` (documented there).
+        """
+        with self._lock:
+            store = text2sql.readonly_store(self.store)
+            return text2sql.safe_execute(store, sql)
 
 
 # ---- process-wide singleton (built lazily, cached) -------------------------- #

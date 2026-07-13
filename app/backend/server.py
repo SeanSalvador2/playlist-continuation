@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from playlistcont.analytics import queries as Q
+from playlistcont.analytics import text2sql as T2S
 
 from . import results as R
 from .engine import get_atlas
@@ -49,6 +50,15 @@ class ProfileRequest(BaseModel):
 
 class RecommendRequest(ProfileRequest):
     k: int = 24
+
+
+class AskTemplateRequest(BaseModel):
+    template_id: str
+    slots: Dict[str, object] = Field(default_factory=dict)
+
+
+class AskSqlRequest(BaseModel):
+    sql: str
 
 
 def create_app(warm: bool = True) -> FastAPI:
@@ -221,6 +231,35 @@ def create_app(warm: bool = True) -> FastAPI:
     @app.get("/api/history/journey")
     def history_journey() -> dict:
         return get_history_atlas().journey()
+
+    # ---- ask your library (Phase 5: template library + guarded free-form SQL) ---- #
+    @app.get("/api/history/ask/templates")
+    def history_ask_templates() -> dict:
+        return get_history_atlas().ask_templates()
+
+    @app.post("/api/history/ask/run")
+    def history_ask_run(req: AskTemplateRequest) -> dict:
+        try:
+            return get_history_atlas().ask_run_template(req.template_id, req.slots)
+        except T2S.SlotError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except T2S.GuardrailError as exc:  # a generated template SQL should never trip this
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/history/ask/sql")
+    def history_ask_sql(req: AskSqlRequest) -> dict:
+        """Guarded raw-SQL execution for power users.
+
+        Returns a structured result: ``{"ok": true, ...}`` with the normalized SQL and
+        rows, or ``{"ok": false, "error": ...}`` when the guardrail rejects or the query
+        fails — so the UI can show the message inline rather than treating it as a crash.
+        """
+        try:
+            result = get_history_atlas().ask_sql(req.sql)
+            result["ok"] = True
+            return result
+        except T2S.GuardrailError as exc:
+            return {"ok": False, "error": str(exc), "sql": req.sql}
 
     # ---- static frontend (mounted last so /api wins) ------------------- #
     if FRONTEND_DIST.exists():

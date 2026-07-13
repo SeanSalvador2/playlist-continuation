@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  api, type AxesOverTime, type Clock, type Config, type GenreMix,
+  api, type AskResult, type AskSlot, type AskTemplate, type AxesOverTime,
+  type Clock, type Config, type GenreMix,
   type HabitsResult, type HistorySummary, type ShiftsResult, type Shift,
   type TopItems, type Trends, type Window,
 } from "../api";
@@ -55,8 +56,282 @@ export function Library({ config }: { config: Config }) {
         </div>
         <AxesPanel window={window} config={config} />
         <HabitsPanel window={window} config={config} />
+        <AskPanel />
       </div>
     </div>
+  );
+}
+
+// ==========================================================================
+//  Ask your library — keyless template library + guarded free-form SQL
+// ==========================================================================
+function toCsv(result: AskResult): string {
+  const cols = result.columns;
+  const esc = (v: unknown) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [cols.join(",")];
+  for (const row of result.rows) lines.push(cols.map((c) => esc(row[c])).join(","));
+  return lines.join("\n");
+}
+
+function ResultTable({ result }: { result: AskResult }) {
+  if (!result.columns.length) return <p className="hint">No columns returned.</p>;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="held lib-table" aria-label="Query results">
+        <thead>
+          <tr>{result.columns.map((c) => <th key={c}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {result.rows.map((row, i) => (
+            <tr key={i}>
+              {result.columns.map((c) => (
+                <td key={c} className="mono small">
+                  {row[c] === null || row[c] === undefined ? "—" : String(row[c])}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {!result.rows.length && (
+            <tr><td colSpan={result.columns.length} className="hint" style={{ padding: 16 }}>
+              No rows matched.
+            </td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// The always-visible "we always show the SQL" disclosure, shared by both paths.
+function SqlDisclosure({ sql }: { sql: string }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="hint" style={{ marginBottom: 4 }}>
+        We always show the exact SQL we ran — nothing runs that you can't read.
+      </div>
+      <pre className="mono" aria-label="Executed SQL" style={{
+        background: "var(--card-2, rgba(127,127,127,0.08))", padding: 12,
+        borderRadius: 8, overflowX: "auto", fontSize: 12, margin: 0,
+        whiteSpace: "pre-wrap", wordBreak: "break-word",
+      }}>{sql}</pre>
+    </div>
+  );
+}
+
+function SlotInput({ slot, value, onChange }: {
+  slot: AskSlot; value: string; onChange: (v: string) => void;
+}) {
+  const common = { "aria-label": slot.label, className: "date-input" as const };
+  if (slot.type === "enum") {
+    return (
+      <label className="hint" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {slot.label}
+        <select {...common} value={value} onChange={(e) => onChange(e.target.value)}>
+          {(slot.options ?? []).map((o) => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
+        </select>
+      </label>
+    );
+  }
+  return (
+    <label className="hint" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      {slot.label}
+      <input
+        {...common}
+        type={slot.type === "date" ? "date" : "number"}
+        min={slot.min} max={slot.max}
+        value={value}
+        style={{ width: slot.type === "date" ? undefined : 90 }}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+function AskPanel() {
+  const [templates, setTemplates] = useState<AskTemplate[]>([]);
+  const [schemaCard, setSchemaCard] = useState("");
+  const [activeId, setActiveId] = useState<string>("");
+  const [slotVals, setSlotVals] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<AskResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.askTemplates().then((t) => {
+      setTemplates(t.templates);
+      setSchemaCard(t.schema_card);
+      if (t.templates.length) selectTemplate(t.templates[0]);
+    }).catch((e) => setError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const active = useMemo(() => templates.find((t) => t.id === activeId) ?? null, [templates, activeId]);
+
+  function selectTemplate(t: AskTemplate) {
+    setActiveId(t.id);
+    const init: Record<string, string> = {};
+    for (const s of t.slots) init[s.name] = String(s.default);
+    setSlotVals(init);
+    setResult(null);
+    setError(null);
+  }
+
+  async function runTemplate() {
+    if (!active) return;
+    setBusy(true); setError(null);
+    try {
+      const slots: Record<string, number | string> = {};
+      for (const s of active.slots) {
+        slots[s.name] = s.type === "int" ? Number(slotVals[s.name]) : slotVals[s.name];
+      }
+      setResult(await api.askRun(active.id, slots));
+    } catch (e) {
+      setError(`Could not run this question: ${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const csvHref = useMemo(() => {
+    if (!result || !result.columns.length) return null;
+    return "data:text/csv;charset=utf-8," + encodeURIComponent(toCsv(result));
+  }, [result]);
+
+  return (
+    <section className="card card-pad" aria-label="Ask your library">
+      <div className="card-title">
+        Ask your library
+        <span className="hint">free-form questions your dashboards don’t cover — no keys needed</span>
+      </div>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Pick a question, tune its parameters, and run it. Everything goes through a
+        read-only guardrail (single SELECT only) and we always show you the SQL.
+      </p>
+
+      {error && <div className="callout" style={{ marginBottom: 12 }}>{error}</div>}
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <label className="hint" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          Question
+          <select
+            className="date-input" aria-label="Template question"
+            value={activeId}
+            onChange={(e) => {
+              const t = templates.find((x) => x.id === e.target.value);
+              if (t) selectTemplate(t);
+            }}
+            style={{ minWidth: 320 }}
+          >
+            {templates.map((t) => <option key={t.id} value={t.id}>{t.question}</option>)}
+          </select>
+        </label>
+      </div>
+
+      {active && (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>{active.description}</p>
+          {active.slots.length > 0 && (
+            <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+              {active.slots.map((s) => (
+                <SlotInput key={s.name} slot={s} value={slotVals[s.name] ?? ""}
+                           onChange={(v) => setSlotVals((prev) => ({ ...prev, [s.name]: v }))} />
+              ))}
+            </div>
+          )}
+          <button className="btn" onClick={runTemplate} disabled={busy}>
+            {busy ? "Running…" : "Run question"}
+          </button>
+        </>
+      )}
+
+      {result && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span className="hint">
+              {result.row_count} row{result.row_count === 1 ? "" : "s"}
+              {result.truncated ? " (capped)" : ""}
+            </span>
+            {csvHref && (
+              <a className="btn ghost" href={csvHref} download={`${result.template_id ?? "query"}.csv`}>
+                Download CSV
+              </a>
+            )}
+          </div>
+          <div style={{ marginTop: 10 }}><ResultTable result={result} /></div>
+          <SqlDisclosure sql={result.sql} />
+        </div>
+      )}
+
+      <AdvancedSql schemaCard={schemaCard} />
+    </section>
+  );
+}
+
+// The collapsed power-user raw-SQL box (same guardrail as the templates).
+function AdvancedSql({ schemaCard }: { schemaCard: string }) {
+  const [open, setOpen] = useState(false);
+  const [sql, setSql] = useState("SELECT COUNT(*) AS plays FROM events");
+  const [result, setResult] = useState<AskResult | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      setResult(await api.askSql(sql));
+    } catch (e) {
+      setResult({ ok: false, error: String(e), sql, columns: [], rows: [], row_count: 0, truncated: false });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details style={{ marginTop: 20 }} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="hint" style={{ cursor: "pointer" }}>Advanced: write your own SQL</summary>
+      {open && (
+        <div style={{ marginTop: 12 }}>
+          <div className="coverage-banner block" role="note" style={{ marginBottom: 10 }}>
+            Power-user mode. Only a <b>single read-only SELECT</b> runs — writes, DDL,
+            <span className="mono"> PRAGMA</span>, <span className="mono">ATTACH</span>,
+            <span className="mono"> COPY</span> and multi-statement queries are rejected,
+            and every query runs in a read-only transaction with an enforced row cap.
+          </div>
+          <textarea
+            className="mono" aria-label="Raw SQL" value={sql}
+            onChange={(e) => setSql(e.target.value)}
+            spellCheck={false}
+            style={{ width: "100%", minHeight: 90, padding: 10, borderRadius: 8,
+                     fontSize: 12, boxSizing: "border-box" }}
+          />
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+            <button className="btn" onClick={run} disabled={busy}>{busy ? "Running…" : "Run SQL"}</button>
+            {schemaCard && (
+              <details style={{ marginLeft: "auto" }}>
+                <summary className="hint" style={{ cursor: "pointer" }}>schema reference</summary>
+                <pre className="mono" style={{ fontSize: 11, overflowX: "auto", maxHeight: 260,
+                     whiteSpace: "pre-wrap" }}>{schemaCard}</pre>
+              </details>
+            )}
+          </div>
+          {result && result.ok === false && (
+            <div className="callout" style={{ marginTop: 12 }}>
+              Rejected: {result.error}
+            </div>
+          )}
+          {result && result.ok !== false && (
+            <div style={{ marginTop: 12 }}>
+              <span className="hint">{result.row_count} row{result.row_count === 1 ? "" : "s"}
+                {result.truncated ? " (capped)" : ""}</span>
+              <div style={{ marginTop: 10 }}><ResultTable result={result} /></div>
+              <SqlDisclosure sql={result.sql} />
+            </div>
+          )}
+        </div>
+      )}
+    </details>
   );
 }
 

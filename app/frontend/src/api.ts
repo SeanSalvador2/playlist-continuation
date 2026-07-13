@@ -231,6 +231,24 @@ export interface Journey {
   error?: string;
 }
 
+// ---- Phase 5: ask your library (template library + guarded free-form SQL) ----
+export interface AskSlot {
+  name: string; type: "int" | "date" | "enum"; label: string;
+  default: number | string; min?: number; max?: number; options?: (number | string)[];
+}
+export interface AskTemplate {
+  id: string; question: string; description: string;
+  slots: AskSlot[]; default_sql: string;
+}
+export interface AskTemplates { templates: AskTemplate[]; schema_card: string }
+export interface AskResult {
+  ok?: boolean;
+  sql: string; columns: string[]; rows: Record<string, unknown>[];
+  row_count: number; truncated: boolean;
+  template_id?: string; question?: string; slots?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface Window { start: string | null; end: string | null }
 function win(w: Window): string {
   const p = new URLSearchParams();
@@ -324,4 +342,10 @@ export const api = {
     return get<HabitsResult>(`/api/history/habits?${p.toString()}`);
   },
   historyJourney: () => get<Journey>("/api/history/journey"),
+
+  // ---- ask your library ----
+  askTemplates: () => get<AskTemplates>("/api/history/ask/templates"),
+  askRun: (templateId: string, slots: Record<string, number | string>) =>
+    post<AskResult>("/api/history/ask/run", { template_id: templateId, slots }),
+  askSql: (sql: string) => post<AskResult>("/api/history/ask/sql", { sql }),
 };

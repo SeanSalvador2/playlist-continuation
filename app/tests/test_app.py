@@ -190,3 +190,55 @@ def test_journey_is_cached_singleton(client):
     b = client.get("/api/history/journey").json()
     assert a["detections"] == b["detections"]
     assert [s["title"] for s in a["story"]["slides"]] == [s["title"] for s in b["story"]["slides"]]
+
+
+# ---- ask your library (Phase 5: template library + guarded free-form SQL) -- #
+def test_ask_templates_lists_typed_slots(client):
+    payload = client.get("/api/history/ask/templates").json()
+    templates = payload["templates"]
+    assert len(templates) >= 15
+    ids = {t["id"] for t in templates}
+    assert "most_skipped_artists" in ids and "one_hit_wonders" in ids
+    # the schema card is shipped so the UI can show the "what can I ask" reference
+    assert "TABLE events" in payload["schema_card"]
+    # every template exposes its default SQL and typed slots
+    for t in templates:
+        assert t["default_sql"].strip()
+        for s in t["slots"]:
+            assert s["type"] in ("int", "date", "enum")
+
+
+def test_ask_run_template_returns_rows_and_sql(client):
+    body = {"template_id": "most_skipped_artists", "slots": {"min_plays": 20, "limit": 5}}
+    r = client.post("/api/history/ask/run", json=body).json()
+    assert r["template_id"] == "most_skipped_artists"
+    assert r["row_count"] <= 5
+    assert r["columns"][0] == "artist"
+    assert "LIMIT" in r["sql"]                     # the executed SQL is always shown
+    assert r["slots"]["min_plays"] == 20
+
+
+def test_ask_run_template_rejects_bad_slot(client):
+    r = client.post("/api/history/ask/run",
+                    json={"template_id": "most_skipped_artists", "slots": {"min_plays": "oops"}})
+    assert r.status_code == 400
+
+
+def test_ask_sql_runs_guarded_select(client):
+    r = client.post("/api/history/ask/sql",
+                    json={"sql": "SELECT COUNT(*) AS n FROM events"}).json()
+    assert r["ok"] is True
+    assert r["rows"][0]["n"] > 0
+    assert "LIMIT" in r["sql"]                     # normalized SQL carries the row cap
+
+
+def test_ask_sql_blocks_writes_with_structured_error(client):
+    for attack in ["DROP TABLE events", "INSERT INTO events VALUES (1)",
+                   "SELECT 1; DROP TABLE events", "PRAGMA database_list"]:
+        r = client.post("/api/history/ask/sql", json={"sql": attack}).json()
+        assert r["ok"] is False
+        assert r["error"]
+    # the store is untouched after the attacks
+    ok = client.post("/api/history/ask/sql",
+                     json={"sql": "SELECT COUNT(*) AS n FROM events"}).json()
+    assert ok["ok"] is True and ok["rows"][0]["n"] > 0
