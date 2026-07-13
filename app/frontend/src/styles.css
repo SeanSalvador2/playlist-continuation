@@ -455,6 +455,25 @@ table.lib-table td, table.lib-table th { padding: 8px 12px; }
 }
 .coverage-banner.block b { color: var(--ink); }
 
+/* significant shifts + habits (Phase 2 statistics) */
+.shift-windows { display: block; margin-bottom: 12px; }
+.shift-windows b { color: var(--ink); }
+.shift-list { display: flex; flex-direction: column; gap: 10px; }
+.shift-card {
+  border: 1px solid var(--hairline); border-left: 3px solid var(--accent);
+  background: var(--surface-2); border-radius: 0 var(--r-md) var(--r-md) 0;
+  padding: 11px 14px;
+}
+.shift-sentence { margin: 0 0 8px; font-size: 14px; color: var(--ink); line-height: 1.45; }
+.shift-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shift-bar {
+  display: inline-block; width: 120px; height: 8px; flex: 0 0 auto;
+  background: var(--surface); border: 1px solid var(--hairline);
+  border-radius: 4px; overflow: hidden;
+}
+.shift-bar > span { display: block; height: 100%; border-radius: 4px; }
+.shift-eff { font-size: 11px; color: var(--ink-2); }
+
 .axes-multiples { align-items: start; }
 .axis-multiple {
   border: 1px solid var(--hairline); border-radius: var(--r-md);

@@ -31,9 +31,10 @@ from __future__ import annotations
 
 import os
 import threading
+from datetime import date, timedelta
 from typing import Optional
 
-from playlistcont.analytics import queries
+from playlistcont.analytics import queries, stats
 from playlistcont.history.features import attach_extended_features, attach_real_features
 from playlistcont.history.schema import ListeningHistory
 from playlistcont.history.spotify_export import load_basic_history, load_extended_history
@@ -170,6 +171,42 @@ class HistoryAtlas:
     def genres(self, start=None, end=None) -> dict:
         with self._lock:
             return queries.top_flavors_or_genres(self.store, start=start, end=end)
+
+    # ------------------------------------------------------------------ #
+    #  Phase 2: classical statistics (FDR-corrected, effect-floored)
+    # ------------------------------------------------------------------ #
+    def _preceding_window(self, b_start: date, b_end: date):
+        """The same-length window ending the day before ``b_start`` (clamped to span)."""
+        length = (b_end - b_start).days + 1
+        a_end = b_start - timedelta(days=1)
+        a_start = a_end - timedelta(days=length - 1)
+        if self.full_span:
+            first = date.fromisoformat(self.full_span["first"])
+            if a_start < first:
+                a_start = first
+        return a_start, a_end
+
+    def shifts(self, mode="auto", start=None, end=None,
+               a_start=None, a_end=None, b_start=None, b_end=None) -> dict:
+        """Significant shifts between two windows (auto = selected vs preceding same-length)."""
+        if mode == "auto":
+            b_s = stats._as_date(start)
+            b_e = stats._as_date(end)
+            if self.full_span:
+                b_s = b_s or date.fromisoformat(self.full_span["first"])
+                b_e = b_e or date.fromisoformat(self.full_span["last"])
+            a_s, a_e = self._preceding_window(b_s, b_e)
+        else:
+            a_s, a_e = stats._as_date(a_start), stats._as_date(a_end)
+            b_s, b_e = stats._as_date(b_start), stats._as_date(b_end)
+        with self._lock:
+            payload = stats.significant_shifts(self.store, a_s, a_e, b_s, b_e)
+        payload["mode"] = mode
+        return payload
+
+    def habits(self, group_by="weekday", start=None, end=None) -> dict:
+        with self._lock:
+            return stats.habit_anova(self.store, start=start, end=end, group_by=group_by)
 
 
 # ---- process-wide singleton (built lazily, cached) -------------------------- #

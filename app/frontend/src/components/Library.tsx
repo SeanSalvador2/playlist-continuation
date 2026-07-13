@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   api, type AxesOverTime, type Clock, type Config, type GenreMix,
-  type HistorySummary, type TopItems, type Trends, type Window,
+  type HabitsResult, type HistorySummary, type ShiftsResult, type Shift,
+  type TopItems, type Trends, type Window,
 } from "../api";
 import { useTheme } from "../theme";
 import { HONEST, SERIES } from "../palette";
@@ -45,6 +46,7 @@ export function Library({ config }: { config: Config }) {
 
       <div className="stack">
         <WindowPicker window={window} setWindow={setWindow} fullSpan={fullSpan} />
+        <ShiftsPanel window={window} />
         <TopListsPanel window={window} />
         <TrendsPanel window={window} />
         <div className="grid-2">
@@ -52,6 +54,7 @@ export function Library({ config }: { config: Config }) {
           <GenrePanel window={window} />
         </div>
         <AxesPanel window={window} config={config} />
+        <HabitsPanel window={window} config={config} />
       </div>
     </div>
   );
@@ -442,6 +445,163 @@ function CoverageBanner({ coverage, plays, total }: { coverage: number; plays: n
       Axes computed on <b>{Math.round(coverage * 100)}%</b> of plays
       {total ? ` (${fmt(plays)} of ${fmt(total)} had features)` : ""}.
     </div>
+  );
+}
+
+// ---- significant shifts: FDR-corrected, effect-floored change detection ---- //
+// Effect magnitude that fills the bar, per effect kind (documented floors live in
+// the backend; these are display scales, not thresholds).
+const EFFECT_FULL: Record<string, number> = {
+  cohen_d: 0.8, rank_biserial: 0.8, cramers_v: 0.5, prop_diff: 0.3,
+};
+const EFFECT_SYMBOL: Record<string, string> = {
+  cohen_d: "d", rank_biserial: "r", cramers_v: "V", prop_diff: "Δ",
+};
+
+function ShiftsPanel({ window }: { window: Window }) {
+  const { mode } = useTheme();
+  const [data, setData] = useState<ShiftsResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(null); setError(null);
+    api.historyShifts(window).then(setData).catch((e) => setError(String(e)));
+  }, [window]);
+
+  const a = data?.window_a;
+  const b = data?.window_b;
+
+  return (
+    <section className="card card-pad" aria-label="Significant shifts">
+      <div className="card-title">
+        Significant shifts
+        <span className="hint">selected window vs the preceding same-length window</span>
+      </div>
+
+      {error && <p className="hint">Could not compute shifts: {error}</p>}
+      {!data && !error && <p className="hint">Testing for real changes…</p>}
+
+      {data && (
+        <>
+          <div className="shift-windows hint mono" role="note">
+            {a?.start && a?.end
+              ? <>baseline <b>{a.start} → {a.end}</b> &nbsp;vs&nbsp; recent <b>{b?.start} → {b?.end}</b></>
+              : <>not enough history before the selected window to form a baseline</>}
+          </div>
+
+          {data.shifts.length > 0 ? (
+            <div className="shift-list">
+              {data.shifts.map((s) => <ShiftCard key={`${s.metric}-${s.kind}`} shift={s} mode={mode} />)}
+            </div>
+          ) : (
+            <div className="callout" style={{ marginTop: 12 }}>
+              {data.family_size > 0
+                ? "No change here is both statistically solid and big enough to matter. Across "
+                  + `${data.family_size} tests, nothing cleared the FDR + effect-size bar — your `
+                  + "listening in these two windows is statistically indistinguishable."
+                : "Not enough plays in these windows to test for a shift."}
+            </div>
+          )}
+
+          {data.insufficient.length > 0 && (
+            <p className="hint" style={{ marginTop: 12 }}>
+              <span className="tag">insufficient data</span>{" "}
+              couldn’t test {data.insufficient.map((i) => i.metric).join(", ")} — {data.insufficient[0].reason}.
+            </p>
+          )}
+
+          <p className="coverage-banner block" role="note" style={{ marginTop: 14 }}>
+            Results are <b>FDR-corrected</b> (Benjamini-Hochberg, q&nbsp;&lt;&nbsp;{data.q_threshold})
+            with effect-size floors: we only show changes that are both statistically solid and
+            big enough to matter. A bare p-value means little at this many plays.
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ShiftCard({ shift, mode }: { shift: Shift; mode: "light" | "dark" }) {
+  const full = EFFECT_FULL[shift.effect_name] ?? 1;
+  const pct = Math.min(100, (Math.abs(shift.effect) / full) * 100);
+  const sym = EFFECT_SYMBOL[shift.effect_name] ?? "e";
+  const color = SERIES[mode][0];
+  return (
+    <div className="shift-card">
+      <p className="shift-sentence">{shift.sentence}</p>
+      <div className="shift-meta">
+        <span className="shift-bar" aria-hidden="true">
+          <span style={{ width: `${pct}%`, background: color }} />
+        </span>
+        <span className="mono shift-eff">
+          {sym}={shift.effect >= 0 ? "+" : ""}{shift.effect.toFixed(2)} · q={shift.q.toFixed(3)}
+          {shift.corroborated && <span className="hint"> · both tests agree</span>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---- habits: weekday / time-of-day taste ANOVA ---------------------------- //
+type GroupBy = "weekday" | "hour_band";
+const GROUP_LABEL: Record<GroupBy, string> = {
+  weekday: "By weekday", hour_band: "By time of day",
+};
+
+function HabitsPanel({ window, config }: { window: Window; config: Config }) {
+  const [groupBy, setGroupBy] = useState<GroupBy>("weekday");
+  const [data, setData] = useState<HabitsResult | null>(null);
+
+  useEffect(() => {
+    setData(null); api.historyHabits(window, groupBy).then(setData);
+  }, [window, groupBy]);
+
+  const labelOf = (key: string) => config.axes.scalar.find((a) => a.key === key)?.label ?? key;
+  const noun = groupBy === "weekday" ? "day of the week" : "time of day";
+
+  return (
+    <section className="card card-pad" aria-label="Habits">
+      <div className="card-title">
+        Habits
+        <span className="seg" role="group" aria-label="Group habits by">
+          {(["weekday", "hour_band"] as GroupBy[]).map((g) => (
+            <button key={g} aria-pressed={groupBy === g} onClick={() => setGroupBy(g)}>
+              {GROUP_LABEL[g]}
+            </button>
+          ))}
+        </span>
+      </div>
+
+      {!data && <p className="hint">Testing habits…</p>}
+      {data && (
+        data.survivors.length > 0 ? (
+          <div className="shift-list">
+            {data.survivors.map((s) => (
+              <div className="shift-card" key={s.axis}>
+                <p className="shift-sentence">
+                  {s.summary.replace(s.axis, labelOf(s.axis))}
+                </p>
+                <div className="shift-meta">
+                  <span className="mono shift-eff">
+                    Welch F={s.welch_F.toFixed(1)} · q={s.welch_q.toFixed(3)} · ε²={s.epsilon_sq.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="callout">
+            Your taste axes don’t depend on {noun} — no axis differs across {noun} once
+            we FDR-correct and require a real effect size. (Volume may vary; the *character*
+            of what you play doesn’t.)
+          </div>
+        )
+      )}
+      <p className="hint" style={{ marginTop: 10 }}>
+        Welch’s ANOVA (unequal-variance) + Kruskal-Wallis per axis, BH-corrected across axes,
+        with an ε²&nbsp;≥&nbsp;0.01 effect floor.
+      </p>
+    </section>
   );
 }
 

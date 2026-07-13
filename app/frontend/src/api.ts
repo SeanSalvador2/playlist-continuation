@@ -160,6 +160,32 @@ export interface GenreMix {
   coverage: number; plays_with_features: number; total_plays: number;
 }
 
+// ---- Phase 2: significant shifts + habits (classical statistics) ----
+export interface Shift {
+  metric: string; kind: string; sentence: string;
+  effect: number; effect_name: string; q: number; p_raw: number;
+  direction: string | null; mean_a: number | null; mean_b: number | null;
+  n_a: number; n_b: number; corroborated: boolean;
+}
+export interface InsufficientMetric {
+  metric: string; kind: string; n_a: number; n_b: number; reason: string;
+}
+export interface ShiftsResult {
+  window_a: { start: string | null; end: string | null };
+  window_b: { start: string | null; end: string | null };
+  q_threshold: number; family_size: number; n_survivors: number;
+  shifts: Shift[]; insufficient: InsufficientMetric[]; mode: string;
+}
+export interface HabitSurvivor {
+  axis: string; summary: string;
+  welch_F: number; welch_q: number; epsilon_sq: number;
+  group_means: Record<string, number>;
+}
+export interface HabitsResult {
+  group_by: string; q_threshold: number;
+  survivors: HabitSurvivor[]; axes: { insufficient?: boolean }[];
+}
+
 export interface Window { start: string | null; end: string | null }
 function win(w: Window): string {
   const p = new URLSearchParams();
@@ -239,5 +265,17 @@ export const api = {
   historyGenres: (w: Window) => {
     const q = win(w);
     return get<GenreMix>(`/api/history/genres${q ? `?${q}` : ""}`);
+  },
+  // significant shifts: selected window (B) vs the preceding same-length window (A)
+  historyShifts: (w: Window) => {
+    const p = new URLSearchParams(win(w));
+    p.set("mode", "auto");
+    const q = p.toString();
+    return get<ShiftsResult>(`/api/history/shifts${q ? `?${q}` : ""}`);
+  },
+  historyHabits: (w: Window, groupBy: string) => {
+    const p = new URLSearchParams(win(w));
+    p.set("group_by", groupBy);
+    return get<HabitsResult>(`/api/history/habits?${p.toString()}`);
   },
 };

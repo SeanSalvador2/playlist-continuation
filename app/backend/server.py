@@ -193,6 +193,29 @@ def create_app(warm: bool = True) -> FastAPI:
     def history_genres(start: Optional[str] = None, end: Optional[str] = None) -> dict:
         return get_history_atlas().genres(start=start, end=end)
 
+    @app.get("/api/history/shifts")
+    def history_shifts(
+        mode: str = Query("auto", pattern="^(auto|explicit)$"),
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        a_start: Optional[str] = None,
+        a_end: Optional[str] = None,
+        b_start: Optional[str] = None,
+        b_end: Optional[str] = None,
+    ) -> dict:
+        return get_history_atlas().shifts(
+            mode=mode, start=start, end=end,
+            a_start=a_start, a_end=a_end, b_start=b_start, b_end=b_end,
+        )
+
+    @app.get("/api/history/habits")
+    def history_habits(
+        group_by: str = Query("weekday", pattern="^(weekday|hour_band|month)$"),
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> dict:
+        return get_history_atlas().habits(group_by=group_by, start=start, end=end)
+
     # ---- static frontend (mounted last so /api wins) ------------------- #
     if FRONTEND_DIST.exists():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="app")
