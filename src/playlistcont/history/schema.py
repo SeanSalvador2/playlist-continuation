@@ -77,6 +77,12 @@ class HistoryTrack:
     always present for synthetic tracks, and for real tracks only after an
     audio-features join (:mod:`playlistcont.history.features`).  ``archetype`` records
     the generating archetype for synthetic tracks (``None`` for real ones).
+
+    ``extended`` is an optional widened per-track record (popularity, danceability,
+    speechiness, loudness, liveness, key, mode, duration_ms) attached by
+    :func:`playlistcont.history.features.attach_extended_features` — ``None`` until
+    that join runs, and individual values inside may be ``None`` (nullable source
+    columns).
     """
 
     track_uri: str
@@ -86,6 +92,7 @@ class HistoryTrack:
     album_uri: Optional[str] = None
     features: Optional[np.ndarray] = None
     archetype: Optional[str] = None
+    extended: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------

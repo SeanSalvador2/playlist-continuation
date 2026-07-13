@@ -6,7 +6,7 @@ ad-hoc aggregations.  Holding the stream in DuckDB gives all of that in SQL for 
 in-memory by default and file-backed when you want to persist or reopen read-only (a
 later text-to-SQL phase queries a file store with ``read_only=True``).
 
-Three tables are built:
+Three tables are always built:
 
 * ``events`` — one row per play: ``event_id, ts, date, hour, weekday, track_uri,
   ms_played, skipped, platform``.  ``weekday`` is 0=Monday .. 6=Sunday.
@@ -16,6 +16,18 @@ Three tables are built:
   histories only after an audio-features join).  Axis names contain ``:`` (e.g.
   ``genre:country``); columns sanitise that to ``_`` (``genre_country``) — see
   :func:`feature_column` for the mapping.
+
+Two further tables are **optional and additive** (Phase 1.5 enrichment) — created only
+when the corresponding data was actually supplied, so pre-enrichment stores and all
+their consumers are unchanged:
+
+* ``extended_features`` — ``uri`` plus the widened per-track record
+  (:data:`EXTENDED_STORE_COLUMNS`; every value column nullable).  Built during
+  :meth:`HistoryStore.from_history` only when at least one track carries an
+  ``extended`` dict (see :func:`playlistcont.history.features.attach_extended_features`).
+* ``artist_tags`` — raw enrichment folksonomy: ``artist_name, tag, mapped_bucket``
+  (``mapped_bucket`` is NULL for tags outside the curated 10-bucket mapping).  Created
+  only via an explicit :meth:`HistoryStore.attach_artist_tags` call with data.
 """
 from __future__ import annotations
 
@@ -33,6 +45,18 @@ def feature_column(axis: str) -> str:
 
 
 FEATURE_COLUMNS: List[str] = [feature_column(a) for a in AXES]
+
+# widened per-track record stored by attach_extended_features (all nullable);
+# pandas nullable dtypes keep NULLs intact through the DuckDB materialisation.
+EXTENDED_STORE_COLUMNS: List[str] = [
+    "popularity", "danceability", "speechiness", "loudness",
+    "liveness", "key", "mode", "duration_ms",
+]
+_EXTENDED_DTYPES: Dict[str, str] = {
+    "popularity": "Int64", "danceability": "Float64", "speechiness": "Float64",
+    "loudness": "Float64", "liveness": "Float64", "key": "Int64",
+    "mode": "Int64", "duration_ms": "Int64",
+}
 
 
 class HistoryStore:
@@ -84,6 +108,13 @@ class HistoryStore:
         self.conn.unregister("_tracks_df")
         self.conn.unregister("_feats_df")
 
+        # optional, additive: only when at least one track has extended data
+        ext_df = self._extended_frame(history)
+        if ext_df is not None:
+            self.conn.register("_ext_df", ext_df)
+            self.conn.execute("CREATE TABLE extended_features AS SELECT * FROM _ext_df")
+            self.conn.unregister("_ext_df")
+
     @staticmethod
     def _events_frame(history: ListeningHistory) -> pd.DataFrame:
         rows = []
@@ -132,16 +163,70 @@ class HistoryStore:
             rows.append(row)
         return pd.DataFrame(rows, columns=cols)
 
+    @staticmethod
+    def _extended_frame(history: ListeningHistory) -> Optional[pd.DataFrame]:
+        """Widened per-track frame, or ``None`` when no track has extended data.
+
+        Every value column is nullable (pandas ``Int64``/``Float64``): a track may
+        carry only a subset of the extended record, and the source table itself has
+        null feature rows.
+        """
+        rows = []
+        for ht in history.tracks.values():
+            if ht.extended is None:
+                continue
+            row: Dict[str, object] = {"uri": ht.track_uri}
+            for col in EXTENDED_STORE_COLUMNS:
+                row[col] = ht.extended.get(col)
+            rows.append(row)
+        if not rows:
+            return None
+        df = pd.DataFrame(rows, columns=["uri"] + EXTENDED_STORE_COLUMNS)
+        for col, dtype in _EXTENDED_DTYPES.items():
+            df[col] = pd.array(
+                [None if pd.isna(v) else v for v in df[col]], dtype=dtype)
+        return df
+
+    # ------------------------------------------------------------------
+    def attach_artist_tags(self, rows) -> int:
+        """Create the optional ``artist_tags`` table from enrichment tag rows.
+
+        ``rows`` is a list of ``{"artist_name", "tag", "mapped_bucket"}`` dicts (as
+        produced by :func:`playlistcont.enrichment.apply.enrich_history`) or an
+        equivalent DataFrame.  A no-op returning 0 when there is no data — the
+        table exists only when tags were actually supplied.
+        """
+        df = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(
+            list(rows), columns=["artist_name", "tag", "mapped_bucket"])
+        if not len(df):
+            return 0
+        df = df[["artist_name", "tag", "mapped_bucket"]]
+        self.conn.register("_artist_tags_df", df)
+        self.conn.execute(
+            "CREATE OR REPLACE TABLE artist_tags AS SELECT * FROM _artist_tags_df")
+        self.conn.unregister("_artist_tags_df")
+        return int(len(df))
+
     # ------------------------------------------------------------------
     def query(self, sql: str) -> pd.DataFrame:
         """Run SQL and return a pandas DataFrame."""
         return self.conn.execute(sql).df()
 
+    def has_table(self, name: str) -> bool:
+        """True when an (optional) table exists in the store."""
+        n = self.conn.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+            [name],
+        ).fetchone()[0]
+        return bool(n)
+
     def table_counts(self) -> Dict[str, int]:
-        """Row counts for the three tables (handy for tests / sanity checks)."""
+        """Row counts for the core tables plus any optional ones that exist."""
+        tables = ["events", "tracks", "track_features"]
+        tables += [t for t in ("extended_features", "artist_tags") if self.has_table(t)]
         return {
             t: int(self.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
-            for t in ("events", "tracks", "track_features")
+            for t in tables
         }
 
     def close(self) -> None:

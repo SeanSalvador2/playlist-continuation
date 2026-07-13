@@ -105,6 +105,82 @@ def build_feature_table(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Widened read (Phase 1.5 enrichment) — ADDITIVE.  ``build_feature_table`` /
+# ``attach_real_features`` are frozen (the recsys pillar depends on their exact
+# behaviour); this function is a separate, wider streaming read used by the
+# personal-history modality.
+# ---------------------------------------------------------------------------
+
+# All useful columns in the audio-features table (measured schema: 17 columns;
+# we skip only ``null_response``, a data-quality flag that nulls the whole
+# feature row when set).
+EXTENDED_COLUMNS: List[str] = [
+    "id", "name", "popularity", "duration_ms", "time_signature", "key",
+    "mode", "tempo", "danceability", "energy", "loudness", "speechiness",
+    "acousticness", "instrumentalness", "liveness", "valence",
+]
+
+
+def build_extended_feature_frame(
+    source: str,
+    needed_ids: Optional[Set[str]] = None,
+    progress=None,
+):
+    """Stream the audio-features parquet(s) into a wide per-track DataFrame.
+
+    Same row-group streaming and id-filtering discipline as
+    :func:`build_feature_table`, but reads **all** useful columns
+    (:data:`EXTENDED_COLUMNS`) instead of the frozen 6-column subset.  Returns a
+    ``pandas.DataFrame`` with one row per matched id (first occurrence wins,
+    matching ``build_feature_table``'s dedup rule).  ``progress(seen_rows,
+    n_matched)`` is called after each row group when given.
+
+    Missing columns in a source file are tolerated (filled with nulls) so tiny
+    test fixtures do not need the full 16-column schema.
+    """
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    if os.path.isdir(source):
+        paths = sorted(glob.glob(os.path.join(source, "**", "*.parquet"),
+                                 recursive=True))
+    else:
+        paths = [source]
+
+    frames: List["pd.DataFrame"] = []
+    seen: Set[str] = set()
+    seen_rows = 0
+    for path in paths:
+        pf = pq.ParquetFile(path)
+        avail = set(pf.schema_arrow.names)
+        cols = [c for c in EXTENDED_COLUMNS if c in avail]
+        if "id" not in cols:
+            raise ValueError(f"{path} has no 'id' column")
+        for rg in range(pf.num_row_groups):
+            df = pf.read_row_group(rg, columns=cols).to_pandas()
+            seen_rows += len(df)
+            if needed_ids is not None:
+                df = df[df["id"].isin(needed_ids)]
+            if len(df):
+                df = df[~df["id"].isin(seen)].drop_duplicates("id", keep="first")
+            if len(df):
+                seen.update(df["id"].tolist())
+                frames.append(df)
+            if progress is not None:
+                progress(seen_rows, len(seen))
+
+    if frames:
+        out = pd.concat(frames, ignore_index=True)
+    else:
+        out = pd.DataFrame(columns=EXTENDED_COLUMNS)
+    # tolerate schema-poor sources: guarantee every extended column exists
+    for c in EXTENDED_COLUMNS:
+        if c not in out.columns:
+            out[c] = None
+    return out[EXTENDED_COLUMNS].reset_index(drop=True)
+
+
 def attach_real_features(ds: Dataset, source: str, progress=None) -> int:
     """Attach audio-feature axis vectors to a real-MPD ``Dataset`` in place.
 

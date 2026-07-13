@@ -17,6 +17,15 @@ Data source (honest by construction):
   *basic* one.  Real data has **no** ground truth and **no** axis features — features
   are attached only when ``PLAYLISTCONT_FEATURES`` names an audio-features parquet
   path, via :func:`attach_real_features`.
+* If additionally ``PLAYLISTCONT_ENRICH=1`` **and** the history is a real export, the
+  Phase 1.5 enrichment runs at startup: the two enrichment tables are downloaded (once,
+  cached under ``.data/enrichment/``), genre axes are filled via
+  :func:`playlistcont.enrichment.enrich_history`, the widened per-track record is
+  attached from ``PLAYLISTCONT_FEATURES`` when set, and the resulting
+  :class:`~playlistcont.enrichment.EnrichmentReport` is included in the summary payload
+  (``enrichment`` key) so the Library provenance banner can state real genre coverage.
+  Failures are recorded in the payload (``{"error": ...}``) rather than killing startup.
+  The synthetic path is completely unchanged (``enrichment`` is ``None``).
 """
 from __future__ import annotations
 
@@ -25,7 +34,7 @@ import threading
 from typing import Optional
 
 from playlistcont.analytics import queries
-from playlistcont.history.features import attach_real_features
+from playlistcont.history.features import attach_extended_features, attach_real_features
 from playlistcont.history.schema import ListeningHistory
 from playlistcont.history.spotify_export import load_basic_history, load_extended_history
 from playlistcont.history.store import HistoryStore
@@ -58,12 +67,44 @@ def _load_history() -> ListeningHistory:
     return history
 
 
+def _maybe_enrich(history: ListeningHistory):
+    """Run Phase 1.5 enrichment when configured; never on synthetic data.
+
+    Returns ``(payload_or_None, artist_tag_rows)``.  ``payload`` is the
+    :class:`EnrichmentReport` as a dict (plus ``extended_matched``), or
+    ``{"error": ...}`` if the download/join failed — startup survives either way.
+    """
+    if os.environ.get("PLAYLISTCONT_ENRICH") != "1":
+        return None, []
+    if history.provenance != "spotify_export":
+        return None, []  # synthetic path: enrichment never touches it
+    try:
+        from playlistcont.enrichment import enrich_history, sources
+
+        artist_table = sources.load_artist_tag_table()
+        track_table = sources.load_track_genre_table()
+        report = enrich_history(
+            history, artist_table=artist_table, track_table=track_table)
+
+        payload = report.to_payload()
+        feats = os.environ.get("PLAYLISTCONT_FEATURES")
+        if feats:
+            payload["extended_matched"] = attach_extended_features(
+                history, source=feats)
+        return payload, report.artist_tag_rows
+    except Exception as exc:  # honest failure surface, not a dead dashboard
+        return {"error": str(exc)}, []
+
+
 class HistoryAtlas:
     """Everything the Library view needs, built once and cached."""
 
     def __init__(self) -> None:
         self.history = _load_history()
+        self.enrichment, _tag_rows = _maybe_enrich(self.history)
         self.store = HistoryStore.from_history(self.history)
+        if _tag_rows:
+            self.store.attach_artist_tags(_tag_rows)
         self.provenance = self.history.provenance
         # A single DuckDB connection is not safe for concurrent use, and FastAPI runs
         # sync endpoints in a threadpool — the Library view fires several panel requests
@@ -102,6 +143,7 @@ class HistoryAtlas:
         base["is_synthetic"] = self.provenance == "synthetic"
         base["full_span"] = self.full_span
         base["ground_truth"] = self._ground_truth()
+        base["enrichment"] = self.enrichment
         return base
 
     def top_items(self, entity="tracks", start=None, end=None,

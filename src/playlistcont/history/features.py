@@ -84,3 +84,71 @@ def attach_real_features(
             ht.features = np.asarray(vec, dtype=np.float32)
             matched += 1
     return matched
+
+
+# ---------------------------------------------------------------------------
+# widened per-track record (Phase 1.5) — additive to the axis-vector path above
+# ---------------------------------------------------------------------------
+
+# fields stored per track (a subset of real_features.EXTENDED_COLUMNS: the ones
+# the Library dashboard and Phase 2/3 consumers actually want per track and that
+# the axis vector does not already carry)
+EXTENDED_FIELDS: List[str] = [
+    "popularity", "danceability", "speechiness", "loudness",
+    "liveness", "key", "mode", "duration_ms",
+]
+
+_INT_FIELDS = {"popularity", "key", "mode", "duration_ms"}
+
+
+def _clean(field: str, value):
+    """None for missing/NaN; ints for count-like fields, floats otherwise."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(f):
+        return None
+    return int(f) if field in _INT_FIELDS else f
+
+
+def attach_extended_features(
+    history: ListeningHistory,
+    source: Optional[str] = None,
+    frame=None,
+) -> int:
+    """Attach the widened per-track record to a history's tracks, in place.
+
+    Provide either ``frame`` (a DataFrame with an ``id`` column plus any of
+    :data:`EXTENDED_FIELDS` — e.g. a tiny fixture in tests, or the output of
+    ``real_features.build_extended_feature_frame``) or ``source`` (a parquet
+    path/dir streamed via that function).  Sets ``HistoryTrack.extended`` to a
+    dict with **all** of :data:`EXTENDED_FIELDS` as keys (missing/NaN values
+    become ``None`` — the store's columns are nullable).  Returns the number of
+    tracks matched.  Never touches ``HistoryTrack.features``.
+    """
+    if frame is None:
+        if source is None:
+            raise ValueError("provide either frame or source")
+        from ..data.real_features import build_extended_feature_frame
+
+        needed = {track_id_from_uri(u) for u in history.tracks}
+        needed.discard(None)
+        frame = build_extended_feature_frame(source, needed_ids=needed)
+
+    cols = [c for c in EXTENDED_FIELDS if c in frame.columns]
+    by_id: Dict[str, dict] = {}
+    for _, row in frame.iterrows():
+        rec = {f: _clean(f, row[f]) if f in cols else None for f in EXTENDED_FIELDS}
+        by_id.setdefault(str(row["id"]), rec)
+
+    matched = 0
+    for uri, ht in history.tracks.items():
+        tid = track_id_from_uri(uri)
+        rec = by_id.get(tid) if tid is not None else None
+        if rec is not None:
+            ht.extended = dict(rec)
+            matched += 1
+    return matched
