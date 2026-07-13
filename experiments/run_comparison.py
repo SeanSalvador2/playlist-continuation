@@ -42,6 +42,7 @@ from playlistcont.models.mf import ALSRecommender  # noqa: E402
 from playlistcont.models.track2vec import Track2VecRecommender  # noqa: E402
 from playlistcont.models.title_model import TitleModelRecommender  # noqa: E402
 from playlistcont.models.taste_engine import TasteEngine  # noqa: E402
+from playlistcont.models.content_knn import ContentKNNRecommender  # noqa: E402
 from playlistcont.models.hybrid import HybridRecommender  # noqa: E402
 
 
@@ -69,6 +70,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--big", action="store_true", help="20k playlists / 15k tracks")
     ap.add_argument("--real", type=str, default=None, help="real MPD slice dir")
+    ap.add_argument("--tag", type=str, default="",
+                    help="suffix for output filenames, e.g. --tag _content_knn "
+                         "writes results_content_knn.csv and leaves results.csv "
+                         "untouched (default: overwrite results.csv)")
     args = ap.parse_args()
     if args.big:
         args.n_playlists, args.n_tracks, args.n_test = 20000, 15000, 4000
@@ -104,6 +109,9 @@ def main():
     if ds.features is not None:
         fit("taste_engine", TasteEngine())
         models["taste_engine"] = submodels["taste_engine"]
+        # pure content-based baseline (feature cosine to the seed centroid)
+        fit("content_knn", ContentKNNRecommender())
+        models["content_knn"] = submodels["content_knn"]
     # hybrid reuses the already-fit submodels
     hy = HybridRecommender(submodels={k: submodels[k] for k in
                                        ["item_cf", "als", "track2vec", "title", "popularity"]})
@@ -137,11 +145,12 @@ def main():
         agg = aggregate(allcases)
         rows.append(dict(model=mname, scenario="OVERALL", n=len(allcases), **agg))
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(RESULTS_DIR, "results.csv"), index=False)
+    tag = args.tag
+    df.to_csv(os.path.join(RESULTS_DIR, f"results{tag}.csv"), index=False)
 
     # ---- markdown tables --------------------------------------------
-    write_markdown(df)
-    make_charts(df)
+    write_markdown(df, tag)
+    make_charts(df, tag)
 
     print(f"\nDone in {time.time()-t0:.1f}s. Wrote results/ and figures/.")
     overall = df[df.scenario == "OVERALL"].set_index("model")
@@ -154,8 +163,8 @@ def _pivot(df, metric):
     return d.pivot_table(index="model", columns="scenario", values=metric)
 
 
-def write_markdown(df):
-    path = os.path.join(RESULTS_DIR, "results.md")
+def write_markdown(df, tag=""):
+    path = os.path.join(RESULTS_DIR, f"results{tag}.md")
     overall = df[df.scenario == "OVERALL"].set_index("model")[
         ["r_precision", "ndcg", "clicks"]
     ].round(4)
@@ -175,10 +184,13 @@ def write_markdown(df):
     print("  wrote", path)
 
 
-def make_charts(df):
+def make_charts(df, tag=""):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
+    fig_dir = FIG_DIR if not tag else os.path.join(RESULTS_DIR, f"figures{tag}")
+    os.makedirs(fig_dir, exist_ok=True)
 
     for metric in ["r_precision", "ndcg", "clicks"]:
         piv = _pivot(df, metric)
@@ -197,7 +209,7 @@ def make_charts(df):
         ax.legend(ncol=4, fontsize=8)
         ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
-        p = os.path.join(FIG_DIR, f"{metric}_by_scenario.png")
+        p = os.path.join(fig_dir, f"{metric}_by_scenario.png")
         fig.savefig(p, dpi=110)
         plt.close(fig)
         print("  wrote", p)
@@ -211,7 +223,7 @@ def make_charts(df):
         ax.set_title(f"Overall {metric}")
         ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()
-    p = os.path.join(FIG_DIR, "overall_summary.png")
+    p = os.path.join(fig_dir, "overall_summary.png")
     fig.savefig(p, dpi=110)
     plt.close(fig)
     print("  wrote", p)
