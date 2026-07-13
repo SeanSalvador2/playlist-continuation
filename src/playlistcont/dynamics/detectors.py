@@ -251,15 +251,22 @@ def pelt(
     deseasonalize: bool = False,
     cost: str = "l2",
     penalty: Optional[float] = None,
+    penalty_scale: float = 1.0,
 ) -> List[DetectedChange]:
     """PELT change points (``ruptures``) on the standardised representation.
 
     ``cost`` selects the segment model: ``"l2"`` (piecewise-constant mean — cheap,
     matches how the regimes are actually planted) or ``"rbf"`` (a kernel cost that
-    also catches distributional/variance changes).  ``penalty`` is PELT's
-    complexity penalty; ``None`` uses :func:`default_penalty` (``d*log n``).  Each
-    interior breakpoint becomes a :class:`DetectedChange` dated at that window,
-    scored by the local mean-shift magnitude.
+    also catches distributional/variance changes).  ``penalty`` is PELT's complexity
+    penalty; ``None`` uses ``penalty_scale *`` :func:`default_penalty`.  The scale
+    knob exists because a modest boost (1.5x — the benchmark-recommended setting for
+    ``rbf``) suppresses *transient* excursions like the December seasonal bump —
+    which cost TWO breakpoints for a short segment that reverts — while keeping
+    *persistent* regime changes, which cost one breakpoint each and amortise over a
+    long segment.  Measured across four generator settings in DYNAMICS.md.  An
+    explicit ``penalty`` overrides both.  Each interior breakpoint becomes a
+    :class:`DetectedChange` dated at that window, scored by the local mean-shift
+    magnitude.
     """
     import ruptures as rpt
 
@@ -267,7 +274,8 @@ def pelt(
     n, d = Z.shape
     if n < 2:
         return []
-    pen = default_penalty(n, d, cost) if penalty is None else float(penalty)
+    pen = (float(penalty_scale) * default_penalty(n, d, cost)
+           if penalty is None else float(penalty))
     algo = rpt.Pelt(model=cost, min_size=2, jump=1).fit(Z)
     bkps = algo.predict(pen=pen)
     out: List[DetectedChange] = []
@@ -479,18 +487,34 @@ class RecommendedDetector:
 def recommended_detector() -> RecommendedDetector:
     """The recommended default detector for Phase 4 (derived from the benchmark).
 
-    Rationale lives in DYNAMICS.md; this is the winner of
-    ``experiments/exp_dynamics.py`` by the documented composite score (mean F1 minus
-    an FP-immunity penalty): **weekly windows, PELT with an ``rbf`` cost on the
-    ``combined`` taste representation, NOT deseasonalised** — because PELT's global
-    segmentation already ignores the transient December bump, and the pooled
-    month-of-year deseasonalisation actually *hurts* it on short (2-year) histories
-    (measured).  PELT-``l2`` on ``combined`` is essentially tied and more
-    interpretable (piecewise-constant means, matching how regimes are planted); it
-    is the robust alternative if a kernel cost is undesirable.  The default (``None``)
-    penalty resolves to the BIC-style :func:`default_penalty`.
+    Rationale lives in DYNAMICS.md; the choice is: **weekly windows, PELT with an
+    ``rbf`` cost on the ``combined`` taste representation, NOT deseasonalised, with
+    the penalty scaled to 1.5x the BIC default** (``penalty_scale=1.5``).
+
+    Why each piece (all measured, see DYNAMICS.md):
+
+    * ``pelt_rbf/combined`` is the strongest method x representation cell across all
+      four generator settings.
+    * ``deseasonalize=False`` — the pooled month-of-year correction is *worse than
+      the disease* on 2-year histories: it raises the December false-positive rate
+      (its month means are contaminated by whichever regime overlapped each
+      December) and washes out genuine changes (30-seed F1 0.98 -> 0.76).
+    * ``penalty_scale=1.5`` — at the plain BIC default the detector fires on ~3.3%
+      of December seasonal spans (measured over 30 seeds; an earlier 8-seed run
+      under-sampled this and read 0.0%), and on the *subtle-change* hard mode it
+      fires on 50% of them.  Scaling the penalty 1.5x halves the default-mode
+      December FP rate (1.7%) and eliminates it in subtle mode (0%), at ~0.01 F1 on
+      default histories — because a transient December bump costs PELT *two*
+      breakpoints while a persistent change costs one, a modest penalty boost
+      selectively prices out the transient.
+
+    Honest residual: ~1.7% of December spans still catch a false positive at this
+    setting, and a December bump at the very end of a history is fundamentally
+    indistinguishable from a persistent change (no reversion data).  PELT-``l2`` on
+    ``combined`` is the more interpretable alternative (piecewise-constant means)
+    but is weaker on subtle changes.
     """
     return RecommendedDetector(
         method="pelt_rbf", representation="combined", granularity="week",
         deseasonalize=False, min_events=30, weighting="plays",
-        params={"penalty": None})
+        params={"penalty": None, "penalty_scale": 1.5})

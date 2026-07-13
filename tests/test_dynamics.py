@@ -208,6 +208,18 @@ def test_default_penalty_cost_aware():
     assert default_penalty(100, 19, "rbf") == pytest.approx(np.log(100))
 
 
+def test_pelt_penalty_scale():
+    ws = _series_from_matrix(_break_series(seed=1), date(2022, 1, 3))
+    # scale 1.0 finds the break; an absurdly large scale prices out everything
+    assert len(pelt(ws, "scalar_axes", cost="l2", penalty_scale=1.0)) >= 1
+    assert pelt(ws, "scalar_axes", cost="l2", penalty_scale=1000.0) == []
+    # an explicit penalty overrides the scale
+    n = int(ws.mask.sum())
+    explicit = pelt(ws, "scalar_axes", cost="l2",
+                    penalty=default_penalty(n, 2, "l2"), penalty_scale=1000.0)
+    assert len(explicit) >= 1
+
+
 def test_penalty_sweep_monotone_and_elbow():
     ws = _series_from_matrix(_break_series(seed=2), date(2022, 1, 3))
     sw = penalty_sweep(ws, "scalar_axes", cost="l2")
@@ -323,6 +335,7 @@ def test_recommended_detector_config_and_runs():
     rd = recommended_detector()
     assert rd.method == "pelt_rbf" and rd.representation == "combined"
     assert rd.granularity == "week" and rd.deseasonalize is False
+    assert rd.params.get("penalty_scale") == 1.5   # the measured December-FP fix
     h = make_synthetic_history(seed=5, n_days=730)
     store = HistoryStore.from_history(h)
     dets = rd.detect(store)
@@ -331,3 +344,16 @@ def test_recommended_detector_config_and_runs():
     assert len(dets) >= 1
     sc = score_detections(dets, h.ground_truth, tolerance_days=14)
     assert sc["f1"] > 0.5     # comfortably better than chance on a planted history
+
+
+def test_recommended_detector_seed11_regression():
+    # Review regression: at the plain BIC penalty the recommended detector fired a
+    # December seasonal false positive on this seed (a bump at the end of the
+    # history that never gets to revert).  The 1.5x penalty_scale prices out the
+    # transient; this pins both the fix and the two true changes.
+    rd = recommended_detector()
+    h = make_synthetic_history(seed=11, n_days=730)
+    store = HistoryStore.from_history(h)
+    sc = score_detections(rd.detect(store), h.ground_truth, tolerance_days=14)
+    assert sc["fp_seasonal"] == 0
+    assert sc["f1"] == pytest.approx(1.0)
