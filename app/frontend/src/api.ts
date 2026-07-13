@@ -186,6 +186,51 @@ export interface HabitsResult {
   survivors: HabitSurvivor[]; axes: { insufficient?: boolean }[];
 }
 
+// ---- Phase 4: the taste journey (trajectory + named eras + fact-checked story) ----
+export interface TrajPoint { date: string; coords: number[]; event_count: number }
+export interface TrajLoading { column: string; label: string; loading: number }
+export interface TrajComponent {
+  index: number; explained_variance_ratio: number;
+  loadings: TrajLoading[]; caption: string;
+}
+export interface Trajectory {
+  points: TrajPoint[]; components: TrajComponent[]; columns: string[];
+  n_components: number; n_windows: number; total_explained: number;
+}
+export interface NamedCount { name: string; plays: number }
+export interface EraCard {
+  index: number; start: string; end: string; duration_days: number;
+  name: string; flavor_id: number;
+  top_artists: NamedCount[];
+  top_tracks: { name: string; artist: string; plays: number }[];
+  exemplar_tracks: { name: string; artist: string; distance: number }[];
+  mean_axes: Record<string, number>;
+  dominant_genres: { genre: string; share: number }[];
+  discovery_rate: number; plays_per_day: number; coverage: number;
+  n_plays: number; n_feature_plays: number;
+  provisional: boolean; opening_change: string | null;
+}
+export interface StoryClaim { text: string; fact_path: string; value: unknown }
+export interface StorySlide {
+  kind: string; title: string; body: string[];
+  claims: StoryClaim[]; payload: Record<string, unknown>;
+}
+export interface StoryPayload { mode: string; slides: StorySlide[] }
+export interface Detection { date: string; score: number; method: string }
+export interface PlantedChange { date: string; kind: string; description: string }
+export interface Journey {
+  detector: { method: string; representation: string; granularity: string; penalty_scale: number };
+  detections: Detection[];
+  trajectory: Trajectory;
+  eras: EraCard[];
+  story: StoryPayload;
+  facts: Record<string, unknown>;
+  provenance: string;
+  is_synthetic: boolean;
+  planted: PlantedChange[] | null;
+  error?: string;
+}
+
 export interface Window { start: string | null; end: string | null }
 function win(w: Window): string {
   const p = new URLSearchParams();
@@ -278,4 +323,5 @@ export const api = {
     p.set("group_by", groupBy);
     return get<HabitsResult>(`/api/history/habits?${p.toString()}`);
   },
+  historyJourney: () => get<Journey>("/api/history/journey"),
 };

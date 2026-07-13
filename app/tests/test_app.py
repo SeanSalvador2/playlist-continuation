@@ -161,3 +161,32 @@ def test_results_trust_ablation(client):
     assert len(tc["honest"]) == 5 and len(tc["adversarial"]) == 5
     # honest is roughly flat; adversarial collapses as trust rises
     assert tc["adversarial"][0]["r_precision"] > tc["adversarial"][-1]["r_precision"]
+
+
+# ---- journey (Phase 4: trajectory + named eras + fact-checked story) ------- #
+def test_journey_shape_and_consistency(client):
+    j = client.get("/api/history/journey").json()
+    assert "error" not in j
+    assert j["is_synthetic"] is True
+    # detector is the benchmark winner
+    assert j["detector"]["method"] == "pelt_rbf"
+    # eras = detections + 1; each named
+    assert len(j["eras"]) == len(j["detections"]) + 1
+    assert all(e["name"] for e in j["eras"])
+    # trajectory: one point per measurable weekly window, 2 captioned components
+    tr = j["trajectory"]
+    assert tr["n_windows"] == len(tr["points"]) > 10
+    assert len(tr["components"]) == 2 and all(c["caption"] for c in tr["components"])
+    # story: ordered slides, each carrying at least one claim
+    slides = j["story"]["slides"]
+    assert slides[0]["kind"] == "title" and slides[-1]["kind"] == "arc"
+    assert all(s["claims"] for s in slides)
+    # planted landmarks are exposed as demo diagnostics
+    assert j["planted"] and all("date" in p for p in j["planted"])
+
+
+def test_journey_is_cached_singleton(client):
+    a = client.get("/api/history/journey").json()
+    b = client.get("/api/history/journey").json()
+    assert a["detections"] == b["detections"]
+    assert [s["title"] for s in a["story"]["slides"]] == [s["title"] for s in b["story"]["slides"]]

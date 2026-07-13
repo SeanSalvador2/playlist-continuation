@@ -18,6 +18,7 @@ Endpoints (all under ``/api``):
     GET  /api/results/held           what-held / what-didn't table
     GET  /api/results/trust          taste-engine trust ablation curves
     GET  /api/results/taste-real     taste engine on the real matched subset
+    GET  /api/history/journey        Phase 4: trajectory + named eras + fact-checked story
 """
 from __future__ import annotations
 
@@ -215,6 +216,11 @@ def create_app(warm: bool = True) -> FastAPI:
         end: Optional[str] = None,
     ) -> dict:
         return get_history_atlas().habits(group_by=group_by, start=start, end=end)
+
+    # ---- journey (Phase 4: trajectory + named eras + fact-checked story) ---- #
+    @app.get("/api/history/journey")
+    def history_journey() -> dict:
+        return get_history_atlas().journey()
 
     # ---- static frontend (mounted last so /api wins) ------------------- #
     if FRONTEND_DIST.exists():

@@ -35,6 +35,10 @@ from datetime import date, timedelta
 from typing import Optional
 
 from playlistcont.analytics import queries, stats
+from playlistcont.dynamics import (
+    build_eras, build_windows, compute_trajectory, gather_facts,
+    recommended_detector, render_story,
+)
 from playlistcont.history.features import attach_extended_features, attach_real_features
 from playlistcont.history.schema import ListeningHistory
 from playlistcont.history.spotify_export import load_basic_history, load_extended_history
@@ -115,6 +119,11 @@ class HistoryAtlas:
         self._lock = threading.Lock()
         # full span (window-independent) drives the date-picker bounds in the UI.
         self.full_span = queries.summary(self.store)["span"]
+        # Phase 4: the taste journey (trajectory + eras + fact-checked story).  The
+        # change points are detected ONCE here, at startup after the store is built,
+        # behind the same lock the analytics panels share; the result is cached.
+        self._journey: Optional[dict] = None
+        self._build_journey()
 
     # ------------------------------------------------------------------ #
     def _ground_truth(self) -> Optional[dict]:
@@ -207,6 +216,69 @@ class HistoryAtlas:
     def habits(self, group_by="weekday", start=None, end=None) -> dict:
         with self._lock:
             return stats.habit_anova(self.store, start=start, end=end, group_by=group_by)
+
+    # ------------------------------------------------------------------ #
+    #  Phase 4: the taste journey (trajectory + named eras + fact-checked story)
+    # ------------------------------------------------------------------ #
+    def _build_journey(self) -> None:
+        """Detect changes once, then build the trajectory, eras and story (cached).
+
+        Everything here is fact-checked by construction: the story is rendered only
+        via :func:`render_story`, which runs its own audit before returning, so a
+        payload that reaches the UI cannot contain an unbacked claim.  Failures are
+        surfaced as ``{"error": ...}`` rather than killing startup.
+        """
+        with self._lock:
+            try:
+                detector = recommended_detector()
+                ws = build_windows(
+                    self.store, granularity=detector.granularity,
+                    min_events=detector.min_events, weighting=detector.weighting)
+                detections = detector.detect(self.store)
+                trajectory = compute_trajectory(ws)
+                eras = build_eras(self.store, detections, flavor_model=ws.flavor_model)
+                facts = gather_facts(self.store, eras, detections)
+                story = render_story(facts, mode="template")
+                self._journey = {
+                    "detector": {
+                        "method": detector.method,
+                        "representation": detector.representation,
+                        "granularity": detector.granularity,
+                        "penalty_scale": (detector.params or {}).get("penalty_scale"),
+                    },
+                    "detections": [
+                        {"date": d.date.isoformat(), "score": round(float(d.score), 4),
+                         "method": d.method}
+                        for d in detections
+                    ],
+                    "trajectory": trajectory.to_payload(),
+                    "eras": [e.to_payload() for e in eras],
+                    "story": story.to_payload(),
+                    "facts": facts.to_payload(),
+                    "provenance": self.provenance,
+                    "is_synthetic": self.provenance == "synthetic",
+                    # demo diagnostics only: the planted change dates, so the UI can
+                    # optionally show "planted vs detected" markers on the synthetic
+                    # demo listener.  Real data has no ground truth (this is None).
+                    "planted": self._planted_changes(),
+                }
+            except Exception as exc:  # honest failure surface, not a dead view
+                self._journey = {"error": str(exc)}
+
+    def _planted_changes(self):
+        gt = self.history.ground_truth
+        if gt is None:
+            return None
+        return [
+            {"date": c.date.isoformat(), "kind": c.kind, "description": c.description}
+            for c in gt.change_points
+        ]
+
+    def journey(self) -> dict:
+        """The cached taste journey: trajectory, eras, story, detections (JSON-ready)."""
+        if self._journey is None:
+            self._build_journey()
+        return self._journey
 
 
 # ---- process-wide singleton (built lazily, cached) -------------------------- #

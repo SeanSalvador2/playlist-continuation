@@ -6,12 +6,14 @@ import { TasteLab } from "./components/TasteLab";
 import { Personas } from "./components/Personas";
 import { Results } from "./components/Results";
 import { Library } from "./components/Library";
+import { Journey } from "./components/Journey";
 
-type View = "lab" | "personas" | "results" | "library";
+type View = "lab" | "personas" | "results" | "library" | "journey";
 const VIEWS: { id: View; label: string }[] = [
   { id: "lab", label: "Taste Lab" },
   { id: "personas", label: "Personas" },
   { id: "library", label: "Library" },
+  { id: "journey", label: "Journey" },
   { id: "results", label: "Results Explorer" },
 ];
 
@@ -64,6 +66,7 @@ export default function App() {
         {config && view === "lab" && <TasteLab config={config} />}
         {config && view === "personas" && <Personas config={config} />}
         {config && view === "library" && <Library config={config} />}
+        {config && view === "journey" && <Journey />}
         {config && view === "results" && <Results />}
       </main>
     </>

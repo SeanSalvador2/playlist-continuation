@@ -492,3 +492,61 @@ table.lib-table td, table.lib-table th { padding: 8px 12px; }
    transiently reduced mid-animation. */
 .reveal { animation: reveal .32s cubic-bezier(.22,.61,.36,1) both; }
 @keyframes reveal { from { transform: translateY(7px); } to { transform: none; } }
+
+/* ==========================================================================
+   Journey view — eras row + story slideshow (Phase 4)
+   ========================================================================== */
+.eras-row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr);
+  gap: 12px; overflow-x: auto; padding-bottom: 6px;
+}
+.era-card {
+  border: 1px solid var(--hairline); border-top: 3px solid var(--muted);
+  background: var(--surface); border-radius: var(--r-md); padding: 13px 14px;
+  display: flex; flex-direction: column; gap: 9px; min-width: 0;
+}
+.era-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.era-num { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-2); }
+.era-prov { font-size: 10.5px; padding: 2px 7px; }
+.era-name {
+  font-family: var(--font-display); font-size: 15px; font-weight: 600; line-height: 1.25;
+  margin: 0; color: var(--ink);
+}
+.era-dates { font-size: 11px; color: var(--muted); }
+.era-artists { display: flex; flex-wrap: wrap; gap: 5px; }
+.era-artists .chip { padding: 3px 9px; font-size: 11px; }
+.era-foot { font-size: 11px; color: var(--muted); }
+
+.mini-axes { display: flex; flex-direction: column; gap: 4px; }
+.mini-axis { display: grid; grid-template-columns: 28px 1fr 34px; align-items: center; gap: 7px; }
+.mini-k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.mini-bar { height: 6px; background: var(--plane); border-radius: 3px; overflow: hidden; }
+.mini-bar > span { display: block; height: 100%; border-radius: 3px; }
+.mini-v { font-size: 10.5px; color: var(--ink-2); text-align: right; }
+
+/* story slideshow */
+.story-card { display: flex; flex-direction: column; }
+.story-slide {
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: var(--plane); padding: 22px 22px 24px; min-height: 190px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.story-kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: var(--muted); }
+.story-title { font-family: var(--font-display); font-size: 23px; font-weight: 600; margin: 0; line-height: 1.2; color: var(--ink); }
+.story-line { margin: 0; font-size: 15px; line-height: 1.5; color: var(--ink-2); }
+.story-title { text-transform: none; }
+
+.transition-bars { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.tbar-row { display: grid; grid-template-columns: 118px 1fr 74px; align-items: center; gap: 9px; }
+.tbar-k { font-size: 12px; color: var(--ink-2); }
+.tbar-track { height: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; }
+.tbar-fill { display: block; height: 100%; border-radius: 4px; }
+.tbar-v { font-size: 11px; color: var(--muted); text-align: right; }
+
+.story-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.story-dots { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.story-dot {
+  width: 9px; height: 9px; border-radius: 999px; padding: 0;
+  border: 1px solid var(--hairline-2); background: transparent; cursor: pointer;
+}
+.story-dot.on { background: var(--accent); border-color: var(--accent); }

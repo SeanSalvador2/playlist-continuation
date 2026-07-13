@@ -231,6 +231,112 @@ export function ClockHeatmap({
 }
 
 // ==========================================================================
+//  Trajectory chart — the 2-D PCA taste path (time-ordered, era-coloured)
+// ==========================================================================
+export interface TrajPt { x: number; y: number; era: number; date: string; t: number }
+export function TrajectoryChart({
+  points, eraColors, xCaption, yCaption, xExplained, yExplained,
+  markers, planted,
+}: {
+  points: TrajPt[];
+  eraColors: string[];
+  xCaption: string; yCaption: string;
+  xExplained: number; yExplained: number;
+  markers: { x: number; y: number; date: string; label: string; provisional: boolean }[];
+  planted: { x: number; y: number; date: string }[];
+}) {
+  const { mode } = useTheme();
+  const ink = chartInk(mode);
+  const [tip, setTip] = useState<Tip | null>(null);
+
+  const padL = 54, padR = 24, padT = 20, padB = 52;
+  const W = 620, H = 440;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+  const allX = [...xs, ...markers.map((m) => m.x), ...planted.map((m) => m.x)];
+  const allY = [...ys, ...markers.map((m) => m.y), ...planted.map((m) => m.y)];
+  const pad = (v: number) => v * 1.08;
+  const xmin = pad(Math.min(...allX, -0.1)), xmax = pad(Math.max(...allX, 0.1));
+  const ymin = pad(Math.min(...allY, -0.1)), ymax = pad(Math.max(...allY, 0.1));
+  const X = (x: number) => padL + ((x - xmin) / (xmax - xmin || 1)) * plotW;
+  const Y = (y: number) => padT + plotH - ((y - ymin) / (ymax - ymin || 1)) * plotH;
+
+  const pathD = points.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join(" ");
+
+  return (
+    <figure style={{ margin: 0 }}>
+      <div style={{ position: "relative" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img"
+             aria-label="Taste trajectory: a two-dimensional PCA path of weekly listening, coloured by era">
+          {/* zero axes */}
+          {X(0) > padL && X(0) < padL + plotW && (
+            <line x1={X(0)} x2={X(0)} y1={padT} y2={padT + plotH} stroke={ink.grid} strokeWidth={1} strokeDasharray="3 4" />
+          )}
+          {Y(0) > padT && Y(0) < padT + plotH && (
+            <line x1={padL} x2={padL + plotW} y1={Y(0)} y2={Y(0)} stroke={ink.grid} strokeWidth={1} strokeDasharray="3 4" />
+          )}
+          {/* plot frame */}
+          <rect x={padL} y={padT} width={plotW} height={plotH} fill="none" stroke={ink.axis} strokeWidth={1} />
+          {/* the ordered path */}
+          <path d={pathD} fill="none" stroke={ink.grid} strokeWidth={1.5} strokeLinejoin="round" opacity={0.9} />
+          {/* planted-change markers (demo diagnostics only) */}
+          {planted.map((m, i) => (
+            <g key={`pl-${i}`}>
+              <line x1={X(m.x)} x2={X(m.x)} y1={Y(m.y) - 11} y2={Y(m.y) + 11} stroke={ink.muted} strokeWidth={1} strokeDasharray="2 2" />
+              <line x1={X(m.x) - 11} x2={X(m.x) + 11} y1={Y(m.y)} y2={Y(m.y)} stroke={ink.muted} strokeWidth={1} strokeDasharray="2 2" />
+            </g>
+          ))}
+          {/* window points, coloured by era, time-graded opacity */}
+          {points.map((p, i) => (
+            <circle key={i} cx={X(p.x)} cy={Y(p.y)} r={3.6}
+                    fill={eraColors[p.era % eraColors.length]}
+                    opacity={0.35 + 0.6 * p.t}
+                    onMouseMove={(e) => setTip({
+                      x: e.clientX, y: e.clientY, title: p.date,
+                      lines: [`PC1 ${p.x.toFixed(2)}`, `PC2 ${p.y.toFixed(2)}`, `chapter ${p.era + 1}`],
+                    })}
+                    onMouseLeave={() => setTip(null)} />
+          ))}
+          {/* detected-change markers: diamonds outlined in the era colour */}
+          {markers.map((m, i) => {
+            const s = 7;
+            return (
+              <g key={`mk-${i}`}
+                 onMouseMove={(e) => setTip({
+                   x: e.clientX, y: e.clientY, title: `change · ${m.date}`,
+                   lines: [m.provisional ? "provisional (final December)" : "detected taste change"],
+                 })}
+                 onMouseLeave={() => setTip(null)}>
+                <path d={`M${X(m.x)},${Y(m.y) - s} L${X(m.x) + s},${Y(m.y)} L${X(m.x)},${Y(m.y) + s} L${X(m.x) - s},${Y(m.y)} Z`}
+                      fill={ink.surface} stroke={ink.primary} strokeWidth={1.6} />
+                {m.provisional && (
+                  <text x={X(m.x)} y={Y(m.y) + 1} textAnchor="middle" dominantBaseline="middle"
+                        fontSize={10} fontWeight={700} fill={ink.primary}>?</text>
+                )}
+              </g>
+            );
+          })}
+          {/* axis captions */}
+          <text x={padL + plotW / 2} y={H - 30} textAnchor="middle" fontSize={11.5}
+                fill={ink.secondary} fontFamily="var(--font-body)">
+            PC1 ≈ {xCaption}
+          </text>
+          <text x={padL + plotW / 2} y={H - 14} textAnchor="middle" fontSize={10}
+                fill={ink.muted} fontFamily="var(--font-mono)">
+            {(xExplained * 100).toFixed(0)}% of variance
+          </text>
+          <text transform={`rotate(-90 ${16} ${padT + plotH / 2})`} x={16} y={padT + plotH / 2}
+                textAnchor="middle" fontSize={11.5} fill={ink.secondary} fontFamily="var(--font-body)">
+            PC2 ≈ {yCaption} · {(yExplained * 100).toFixed(0)}%
+          </text>
+        </svg>
+        <Tooltip tip={tip} />
+      </div>
+    </figure>
+  );
+}
+
+// ==========================================================================
 //  Line chart — trust curves (honest vs adversarial)
 // ==========================================================================
 export function LineChart({
