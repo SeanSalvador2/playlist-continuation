@@ -283,7 +283,10 @@ def _mixture_on(
             frac = (d - d_start).days / max(1, total)
             a = regimes[i].mixture
             b = regimes[i + 1].mixture
-            names = set(a) | set(b)
+            # sorted: set-union iteration order is PYTHONHASHSEED-dependent, and
+            # this dict's order feeds rng.choice downstream — the stream must be
+            # a pure function of the seed, not of hash randomisation.
+            names = sorted(set(a) | set(b))
             mix = {n: (1 - frac) * a.get(n, 0.0) + frac * b.get(n, 0.0) for n in names}
             break
 
@@ -412,7 +415,10 @@ def make_synthetic_history(
         d = start_date + timedelta(days=day_off)
         r_idx = _regime_of(d)
         mix = _mixture_on(d, regimes, drift_windows, seasonal)
-        names = list(mix.keys())
+        # sorted defensively: the order of `names` maps rng.choice draws to
+        # archetypes, so it must never inherit a mixture dict's construction
+        # order — only its contents.
+        names = sorted(mix)
         probs = np.array([mix[n] for n in names])
 
         lam = regimes[r_idx].events_per_day * weekday_w[d.weekday()]

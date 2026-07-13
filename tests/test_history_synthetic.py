@@ -3,6 +3,10 @@
 The point of these tests is not just "it runs" but "the planted ground truth is really
 there and really detectable" — so a Phase-3 change-point detector can be scored on it.
 """
+import hashlib
+import os
+import subprocess
+import sys
 from collections import Counter
 
 import numpy as np
@@ -35,6 +39,47 @@ def test_different_seed_differs():
     a = make_synthetic_history(seed=3)
     b = make_synthetic_history(seed=4)
     assert [_event_key(e) for e in a.events] != [_event_key(e) for e in b.events]
+
+
+_DIGEST_SNIPPET = """
+import hashlib
+from playlistcont.history.synthetic import make_synthetic_history
+h = make_synthetic_history(seed=7, n_days=120)
+blob = "|".join(
+    f"{e.ts.isoformat()},{e.track_uri},{e.ms_played},{e.skipped}" for e in h.events
+)
+print(hashlib.sha256(blob.encode()).hexdigest())
+"""
+
+
+def test_cross_process_determinism_under_hash_randomisation():
+    """Same seed must give an identical event stream in *separate processes*.
+
+    Set iteration order depends on PYTHONHASHSEED, which is fixed per interpreter —
+    so an in-process same-seed comparison (test_same_seed_identical_stream above)
+    can NEVER catch hash-order nondeterminism: both generations see the same hash
+    seed and agree with each other while differing across processes.  This test
+    therefore spawns subprocesses with different PYTHONHASHSEED values and asserts
+    the sha256 digest of the (ts, uri, ms_played, skipped) stream is identical.
+
+    Regression test for a real bug: ``set(a) | set(b)`` in ``_mixture_on`` built the
+    drift-blend mixture dict in hash order, reordering the probabilities consumed by
+    ``rng.choice`` in the event loop.  Hash seeds 1 and 3 demonstrably produced
+    different streams pre-fix (1 and 2 happened to collide, so a single pair is not
+    enough — we compare three).
+    """
+    digests = []
+    for hash_seed in ("1", "2", "3"):
+        env = dict(os.environ, PYTHONHASHSEED=hash_seed)
+        out = subprocess.run(
+            [sys.executable, "-c", _DIGEST_SNIPPET],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert out.returncode == 0, out.stderr
+        digests.append(out.stdout.strip())
+    assert digests[0] == digests[1] == digests[2], (
+        f"event stream is not a pure function of seed: digests {digests}"
+    )
 
 
 def test_events_sorted_and_have_features(hist):
