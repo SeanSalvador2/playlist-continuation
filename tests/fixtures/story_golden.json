@@ -1,0 +1,51 @@
+{
+  "slides": [
+    {
+      "kind": "title",
+      "title": "The story of your taste",
+      "body": [
+        "7918 plays across 181 days, in 2 chapters.",
+        "From January 2022 to June 2022."
+      ]
+    },
+    {
+      "kind": "era",
+      "title": "Chapter 1: mid-tempo, even-keeled rock",
+      "body": [
+        "January 2022 to March 2022 · 90 days.",
+        "Defined by Rock Artist 4-0, Rock Artist 4-3 and Rock Artist 4-4.",
+        "Its sound sat at energy 0.73, valence 0.59 and acousticness 0.32."
+      ]
+    },
+    {
+      "kind": "transition",
+      "title": "The turn into fast, even-keeled, electronic, high-energy rap",
+      "body": [
+        "Around April 2022, your listening changed.",
+        "Acousticness eased (d=-4.30, q=0.000).",
+        "Tempo rose (d=+3.44, q=0.000).",
+        "Energy rose (d=+2.95, q=0.000).",
+        "Lyrical depth eased (d=-2.03, q=0.000)."
+      ]
+    },
+    {
+      "kind": "era",
+      "title": "Chapter 2: fast, even-keeled, electronic, high-energy rap",
+      "body": [
+        "April 2022 to June 2022 · 91 days.",
+        "Defined by Rap Artist 1-0, Rap Artist 1-2 and Rap Artist 1-4.",
+        "Its sound sat at energy 0.93, valence 0.56 and acousticness 0.04."
+      ]
+    },
+    {
+      "kind": "arc",
+      "title": "How far you travelled",
+      "body": [
+        "You went from mid-tempo, even-keeled rock to fast, even-keeled, electronic, high-energy rap.",
+        "The biggest single move was acousticness at d=-4.30 (q=0.000) on the turn into fast, even-keeled, electronic, high-energy rap.",
+        "Rap Artist 1-0 stayed with you longest, across 1 of 2 chapters.",
+        "Discovery peaked in your mid-tempo, even-keeled rock era at 0.06."
+      ]
+    }
+  ]
+}

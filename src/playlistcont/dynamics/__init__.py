@@ -30,8 +30,20 @@ from .detectors import (
     penalty_sweep,
     recommended_detector,
 )
+from .eras import Era, build_eras
 from .eval import score_detections, segmentation_ari
 from .flavors import FlavorModel, assign, fit_flavors
+from .story import (
+    Claim,
+    Slide,
+    Story,
+    StoryFacts,
+    StoryVerificationError,
+    gather_facts,
+    render_story,
+    verify_story,
+)
+from .trajectory import Component, Trajectory, compute_trajectory, human_label
 from .windows import REPRESENTATIONS, WindowSeries, build_windows
 
 __all__ = [
@@ -41,4 +53,9 @@ __all__ = [
     "baseline_scan", "cusum", "pelt", "penalty_sweep", "bocpd",
     "default_penalty", "recommended_detector",
     "score_detections", "segmentation_ari",
+    # Phase 4: trajectory, eras, fact-checked story
+    "Trajectory", "Component", "compute_trajectory", "human_label",
+    "Era", "build_eras",
+    "StoryFacts", "Claim", "Slide", "Story", "StoryVerificationError",
+    "gather_facts", "render_story", "verify_story",
 ]
