@@ -17,6 +17,7 @@ dependencies = [
     "pandas>=2.0",
     "matplotlib>=3.7",
     "gensim>=4.3",
+    "duckdb>=1.0",
 ]
 
 [project.optional-dependencies]
