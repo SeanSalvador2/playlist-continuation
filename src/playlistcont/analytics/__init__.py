@@ -12,6 +12,6 @@ so keeping this layer thin and pure is deliberate.
 """
 from __future__ import annotations
 
-from . import queries
+from . import queries, stats
 
-__all__ = ["queries"]
+__all__ = ["queries", "stats"]
