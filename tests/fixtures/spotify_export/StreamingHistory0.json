@@ -1,0 +1,74 @@
+[
+ {
+  "endTime": "2023-02-01 20:00",
+  "artistName": "Tame Impala",
+  "trackName": "The Less I Know The Better",
+  "msPlayed": 24496
+ },
+ {
+  "endTime": "2023-02-02 10:00",
+  "artistName": "Phoebe Bridgers",
+  "trackName": "Kyoto",
+  "msPlayed": 112678
+ },
+ {
+  "endTime": "2023-02-02 16:00",
+  "artistName": "Kendrick Lamar",
+  "trackName": "HUMBLE.",
+  "msPlayed": 91636
+ },
+ {
+  "endTime": "2023-02-03 10:00",
+  "artistName": "Fleetwood Mac",
+  "trackName": "Dreams",
+  "msPlayed": 108116
+ },
+ {
+  "endTime": "2023-02-04 06:00",
+  "artistName": "Phoebe Bridgers",
+  "trackName": "Kyoto",
+  "msPlayed": 238327
+ },
+ {
+  "endTime": "2023-02-04 10:00",
+  "artistName": "Fleetwood Mac",
+  "trackName": "Dreams",
+  "msPlayed": 174149
+ },
+ {
+  "endTime": "2023-02-04 22:00",
+  "artistName": "Kendrick Lamar",
+  "trackName": "HUMBLE.",
+  "msPlayed": 136041
+ },
+ {
+  "endTime": "2023-02-05 08:00",
+  "artistName": "Fleetwood Mac",
+  "trackName": "Dreams",
+  "msPlayed": 19097
+ },
+ {
+  "endTime": "2023-02-05 21:00",
+  "artistName": "Kendrick Lamar",
+  "trackName": "HUMBLE.",
+  "msPlayed": 11645
+ },
+ {
+  "endTime": "2023-02-06 08:00",
+  "artistName": "Phoebe Bridgers",
+  "trackName": "Kyoto",
+  "msPlayed": 73811
+ },
+ {
+  "endTime": "2023-02-07 02:00",
+  "artistName": "Tame Impala",
+  "trackName": "The Less I Know The Better",
+  "msPlayed": 71122
+ },
+ {
+  "endTime": "2023-02-07 10:00",
+  "artistName": "Boygenius",
+  "trackName": "Not Strong Enough",
+  "msPlayed": 25769
+ }
+]
