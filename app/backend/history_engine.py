@@ -1,0 +1,141 @@
+"""History Atlas — the personal listening-analytics engine behind the Library view.
+
+Mirrors :mod:`app.backend.engine`'s pattern: build a data source + store once at
+startup, cache it as a process-wide singleton, and expose thin methods the server
+translates 1:1 into JSON.  Where ``engine.py`` fits recommendation models over a
+synthetic MPD, this fits a personal *listening history* into a
+:class:`~playlistcont.history.store.HistoryStore` and answers the canned analytics in
+:mod:`playlistcont.analytics.queries`.
+
+Data source (honest by construction):
+
+* By default a **synthetic demo listener** — ``make_synthetic_history(seed=7,
+  n_days=730)`` — whose planted ground truth (taste-change dates, regimes) is surfaced
+  in the summary payload so the UI can label the demo data as a demo.
+* If ``PLAYLISTCONT_HISTORY_EXPORT`` points at a real Spotify GDPR export (a folder or
+  ``.zip``) it is loaded instead: the *extended* streaming history if present, else the
+  *basic* one.  Real data has **no** ground truth and **no** axis features — features
+  are attached only when ``PLAYLISTCONT_FEATURES`` names an audio-features parquet
+  path, via :func:`attach_real_features`.
+"""
+from __future__ import annotations
+
+import os
+import threading
+from typing import Optional
+
+from playlistcont.analytics import queries
+from playlistcont.history.features import attach_real_features
+from playlistcont.history.schema import ListeningHistory
+from playlistcont.history.spotify_export import load_basic_history, load_extended_history
+from playlistcont.history.store import HistoryStore
+from playlistcont.history.synthetic import make_synthetic_history
+
+SEED = 7
+N_DAYS = 730
+
+_PROVENANCE_LABEL = {
+    "synthetic": "synthetic demo listener",
+    "spotify_export": "your Spotify export",
+}
+
+
+def _load_history() -> ListeningHistory:
+    """Load the configured history: a real export if pointed at one, else synthetic."""
+    export = os.environ.get("PLAYLISTCONT_HISTORY_EXPORT")
+    if not export:
+        return make_synthetic_history(seed=SEED, n_days=N_DAYS)
+
+    # Prefer the rich extended export; fall back to the thin basic one if it has no
+    # extended files.  Either raises FileNotFoundError only for a truly bad path.
+    history = load_extended_history(export)
+    if history.n_events == 0:
+        history = load_basic_history(export)
+
+    feats = os.environ.get("PLAYLISTCONT_FEATURES")
+    if feats:
+        attach_real_features(history, source=feats)
+    return history
+
+
+class HistoryAtlas:
+    """Everything the Library view needs, built once and cached."""
+
+    def __init__(self) -> None:
+        self.history = _load_history()
+        self.store = HistoryStore.from_history(self.history)
+        self.provenance = self.history.provenance
+        # A single DuckDB connection is not safe for concurrent use, and FastAPI runs
+        # sync endpoints in a threadpool — the Library view fires several panel requests
+        # at once.  Serialise every query through this lock so parallel panels can't race
+        # on the shared connection.  (Kept here rather than in the Phase 0 store so that
+        # package stays a pure single-threaded query surface.)
+        self._lock = threading.Lock()
+        # full span (window-independent) drives the date-picker bounds in the UI.
+        self.full_span = queries.summary(self.store)["span"]
+
+    # ------------------------------------------------------------------ #
+    def _ground_truth(self) -> Optional[dict]:
+        gt = self.history.ground_truth
+        if gt is None:
+            return None
+        return {
+            "seed": gt.seed,
+            "changes": [
+                {"date": c.date.isoformat(), "kind": c.kind, "description": c.description}
+                for c in gt.change_points
+            ],
+            "regimes": [
+                {"start": r.start.isoformat(), "end": r.end.isoformat(), "label": r.label}
+                for r in gt.regimes
+            ],
+        }
+
+    # ------------------------------------------------------------------ #
+    #  public API used by the server (thin passthroughs to queries.*)
+    # ------------------------------------------------------------------ #
+    def summary(self, start=None, end=None) -> dict:
+        with self._lock:
+            base = queries.summary(self.store, start, end)
+        base["provenance"] = self.provenance
+        base["provenance_label"] = _PROVENANCE_LABEL.get(self.provenance, self.provenance)
+        base["is_synthetic"] = self.provenance == "synthetic"
+        base["full_span"] = self.full_span
+        base["ground_truth"] = self._ground_truth()
+        return base
+
+    def top_items(self, entity="tracks", start=None, end=None,
+                  limit=None, offset=0, by="plays") -> dict:
+        with self._lock:
+            return queries.top_items(self.store, entity=entity, start=start, end=end,
+                                     limit=limit, offset=offset, by=by)
+
+    def trends(self, metric="plays", granularity="week", start=None, end=None,
+               rolling=None) -> dict:
+        with self._lock:
+            return queries.trends(self.store, metric=metric, granularity=granularity,
+                                  start=start, end=end, rolling=rolling)
+
+    def listening_clock(self, start=None, end=None) -> dict:
+        with self._lock:
+            return queries.listening_clock(self.store, start=start, end=end)
+
+    def axes_over_time(self, granularity="week", start=None, end=None) -> dict:
+        with self._lock:
+            return queries.axes_over_time(self.store, granularity=granularity,
+                                          start=start, end=end)
+
+    def genres(self, start=None, end=None) -> dict:
+        with self._lock:
+            return queries.top_flavors_or_genres(self.store, start=start, end=end)
+
+
+# ---- process-wide singleton (built lazily, cached) -------------------------- #
+_HISTORY_ATLAS: Optional[HistoryAtlas] = None
+
+
+def get_history_atlas() -> HistoryAtlas:
+    global _HISTORY_ATLAS
+    if _HISTORY_ATLAS is None:
+        _HISTORY_ATLAS = HistoryAtlas()
+    return _HISTORY_ATLAS

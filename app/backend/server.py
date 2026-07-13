@@ -26,11 +26,15 @@ from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from playlistcont.analytics import queries as Q
+
 from . import results as R
 from .engine import get_atlas
+from .history_engine import get_history_atlas
 
 FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
@@ -54,7 +58,8 @@ def create_app(warm: bool = True) -> FastAPI:
     )
 
     if warm:
-        get_atlas()  # build the synthetic corpus + fit models up front
+        get_atlas()          # build the synthetic corpus + fit models up front
+        get_history_atlas()  # build the listening history + DuckDB store up front
 
     # ---- meta ---------------------------------------------------------- #
     @app.get("/api/health")
@@ -132,6 +137,61 @@ def create_app(warm: bool = True) -> FastAPI:
     @app.get("/api/results/taste-real")
     def results_taste_real() -> dict:
         return {"rows": R.taste_real_subset()}
+
+    # ---- library (personal listening analytics) ------------------------ #
+    @app.get("/api/history/summary")
+    def history_summary(start: Optional[str] = None, end: Optional[str] = None) -> dict:
+        return get_history_atlas().summary(start=start, end=end)
+
+    @app.get("/api/history/top")
+    def history_top(
+        entity: str = Query("tracks", pattern="^(tracks|artists|albums)$"),
+        by: str = Query("plays", pattern="^(plays|minutes)$"),
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: int = 0,
+        offset: int = 0,
+        format: str = Query("json", pattern="^(json|csv)$"),
+    ):
+        payload = get_history_atlas().top_items(
+            entity=entity, by=by, start=start, end=end,
+            limit=limit or None, offset=offset,
+        )
+        if format == "csv":
+            return PlainTextResponse(Q.top_items_to_csv(payload), media_type="text/csv")
+        return payload
+
+    @app.get("/api/history/trends")
+    def history_trends(
+        metric: str = Query("plays", pattern="^(plays|minutes|discovery|skip_rate)$"),
+        granularity: str = Query("week", pattern="^(day|week|month)$"),
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        rolling: Optional[int] = None,
+        format: str = Query("json", pattern="^(json|csv)$"),
+    ):
+        payload = get_history_atlas().trends(
+            metric=metric, granularity=granularity, start=start, end=end, rolling=rolling,
+        )
+        if format == "csv":
+            return PlainTextResponse(Q.trends_to_csv(payload), media_type="text/csv")
+        return payload
+
+    @app.get("/api/history/clock")
+    def history_clock(start: Optional[str] = None, end: Optional[str] = None) -> dict:
+        return get_history_atlas().listening_clock(start=start, end=end)
+
+    @app.get("/api/history/axes")
+    def history_axes(
+        granularity: str = Query("week", pattern="^(day|week|month)$"),
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> dict:
+        return get_history_atlas().axes_over_time(granularity=granularity, start=start, end=end)
+
+    @app.get("/api/history/genres")
+    def history_genres(start: Optional[str] = None, end: Optional[str] = None) -> dict:
+        return get_history_atlas().genres(start=start, end=end)
 
     # ---- static frontend (mounted last so /api wins) ------------------- #
     if FRONTEND_DIST.exists():

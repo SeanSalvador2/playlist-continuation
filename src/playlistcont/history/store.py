@@ -51,7 +51,6 @@ class HistoryStore:
         cls,
         history: ListeningHistory,
         path: Optional[str] = None,
-        read_only: bool = False,
     ) -> "HistoryStore":
         """Build the store from a history (in-memory unless ``path`` is given)."""
         import duckdb
