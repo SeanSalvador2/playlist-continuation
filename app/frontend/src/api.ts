@@ -118,6 +118,56 @@ export interface TrustAblation {
   adversarial: { trust: number; r_precision: number; clicks: number }[];
 }
 
+// ---- library (personal listening analytics) ----
+export interface Span { first: string; last: string; days: number }
+export interface GroundTruthChange { date: string; kind: string; description: string }
+export interface HistorySummary {
+  start: string | null; end: string | null;
+  span: Span | null;
+  total_plays: number; total_minutes: number;
+  distinct_tracks: number; distinct_artists: number;
+  skip_flagged: number; skip_rate: number; plays_per_day: number;
+  provenance: string; provenance_label: string; is_synthetic: boolean;
+  full_span: Span | null;
+  ground_truth: {
+    seed: number;
+    changes: GroundTruthChange[];
+    regimes: { start: string; end: string; label: string }[];
+  } | null;
+}
+export interface TopRow {
+  rank: number; name: string; artist?: string;
+  plays: number; minutes: number; share: number;
+}
+export interface TopItems {
+  entity: string; by: string; total: number;
+  total_plays: number; total_minutes: number;
+  offset: number; limit: number; rows: TopRow[];
+}
+export interface TrendBucket { bucket: string; value: number; rolling?: number | null }
+export interface Trends {
+  metric: string; granularity: string; rolling: number | null; buckets: TrendBucket[];
+}
+export interface Clock {
+  weekdays: string[]; hours: number[]; matrix: number[][]; max: number; total: number;
+}
+export interface AxesOverTime {
+  granularity: string; axes: string[];
+  buckets: { bucket: string; plays: number; coverage: number; means: Record<string, number | null> }[];
+}
+export interface GenreMix {
+  genres: string[]; mix: { genre: string; mean: number }[];
+  coverage: number; plays_with_features: number; total_plays: number;
+}
+
+export interface Window { start: string | null; end: string | null }
+function win(w: Window): string {
+  const p = new URLSearchParams();
+  if (w.start) p.set("start", w.start);
+  if (w.end) p.set("end", w.end);
+  return p.toString();
+}
+
 async function get<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} -> ${r.status}`);
@@ -147,4 +197,47 @@ export const api = {
   held: () => get<{ rows: HeldRow[] }>("/api/results/held"),
   trust: () => get<TrustAblation>("/api/results/trust"),
   tasteReal: () => get<{ rows: OverviewRow[] }>("/api/results/taste-real"),
+
+  // ---- library ----
+  historySummary: (w: Window) => {
+    const q = win(w);
+    return get<HistorySummary>(`/api/history/summary${q ? `?${q}` : ""}`);
+  },
+  historyTop: (w: Window, entity: string, by: string, limit: number, offset: number) => {
+    const p = new URLSearchParams(win(w));
+    p.set("entity", entity); p.set("by", by);
+    p.set("limit", String(limit)); p.set("offset", String(offset));
+    return get<TopItems>(`/api/history/top?${p.toString()}`);
+  },
+  historyTopCsvUrl: (w: Window, entity: string, by: string) => {
+    const p = new URLSearchParams(win(w));
+    p.set("entity", entity); p.set("by", by); p.set("format", "csv");
+    return `/api/history/top?${p.toString()}`;
+  },
+  historyTrends: (w: Window, metric: string, granularity: string, rolling: number | null) => {
+    const p = new URLSearchParams(win(w));
+    p.set("metric", metric); p.set("granularity", granularity);
+    if (rolling) p.set("rolling", String(rolling));
+    return get<Trends>(`/api/history/trends?${p.toString()}`);
+  },
+  historyTrendsCsvUrl: (w: Window, metric: string, granularity: string, rolling: number | null) => {
+    const p = new URLSearchParams(win(w));
+    p.set("metric", metric); p.set("granularity", granularity);
+    if (rolling) p.set("rolling", String(rolling));
+    p.set("format", "csv");
+    return `/api/history/trends?${p.toString()}`;
+  },
+  historyClock: (w: Window) => {
+    const q = win(w);
+    return get<Clock>(`/api/history/clock${q ? `?${q}` : ""}`);
+  },
+  historyAxes: (w: Window, granularity: string) => {
+    const p = new URLSearchParams(win(w));
+    p.set("granularity", granularity);
+    return get<AxesOverTime>(`/api/history/axes?${p.toString()}`);
+  },
+  historyGenres: (w: Window) => {
+    const q = win(w);
+    return get<GenreMix>(`/api/history/genres${q ? `?${q}` : ""}`);
+  },
 };

@@ -173,6 +173,64 @@ export function Heatmap({
 }
 
 // ==========================================================================
+//  Listening clock — weekday × hour play-count heatmap (sequential blue)
+// ==========================================================================
+export function ClockHeatmap({
+  weekdays, hours, matrix, max,
+}: {
+  weekdays: string[]; hours: number[]; matrix: number[][]; max: number;
+}) {
+  const { mode } = useTheme();
+  const ink = chartInk(mode);
+  const [tip, setTip] = useState<Tip | null>(null);
+
+  const cellW = 24, cellH = 26, padL = 44, padT = 22, gap = 2;
+  const W = padL + hours.length * cellW + 8;
+  const H = padT + weekdays.length * cellH + 20;
+
+  return (
+    <figure style={{ margin: 0 }}>
+      <div className="heat-scroll" style={{ position: "relative" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} style={{ maxWidth: "none" }} role="img"
+             aria-label="Listening clock: play counts by weekday and hour of day">
+          {hours.map((h) => (
+            (h % 3 === 0) ? (
+              <text key={h} x={padL + h * cellW + cellW / 2} y={padT - 8} textAnchor="middle"
+                    fontSize={9.5} fill={ink.muted} fontFamily="var(--font-mono)">{h}</text>
+            ) : null
+          ))}
+          {weekdays.map((wd, wi) => (
+            <text key={wd} x={padL - 10} y={padT + wi * cellH + cellH / 2}
+                  textAnchor="end" dominantBaseline="middle" fontSize={11} fontWeight={500}
+                  fill={ink.primary} fontFamily="var(--font-body)">{wd}</text>
+          ))}
+          {weekdays.map((wd, wi) =>
+            hours.map((h) => {
+              const v = matrix[wi]?.[h] ?? 0;
+              const t = max > 0 ? v / max : 0;
+              const fill = v === 0 ? ink.surface : seqStep(t);
+              return (
+                <rect key={`${wi}-${h}`} x={padL + h * cellW + gap / 2} y={padT + wi * cellH + gap / 2}
+                      width={cellW - gap} height={cellH - gap} rx={3} fill={fill}
+                      stroke={ink.grid} strokeWidth={0.75}
+                      onMouseMove={(e) => setTip({
+                        x: e.clientX, y: e.clientY, title: `${wd} · ${h}:00`,
+                        lines: [`${v} play${v === 1 ? "" : "s"}`],
+                      })}
+                      onMouseLeave={() => setTip(null)} />
+              );
+            }),
+          )}
+          <text x={padL} y={H - 4} fontSize={10} fill={ink.secondary}
+                fontFamily="var(--font-mono)">hour of day →</text>
+        </svg>
+        <Tooltip tip={tip} />
+      </div>
+    </figure>
+  );
+}
+
+// ==========================================================================
 //  Line chart — trust curves (honest vs adversarial)
 // ==========================================================================
 export function LineChart({

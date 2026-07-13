@@ -5,11 +5,13 @@ import { BrandMark, MoonIcon, SunIcon } from "./components/icons";
 import { TasteLab } from "./components/TasteLab";
 import { Personas } from "./components/Personas";
 import { Results } from "./components/Results";
+import { Library } from "./components/Library";
 
-type View = "lab" | "personas" | "results";
+type View = "lab" | "personas" | "results" | "library";
 const VIEWS: { id: View; label: string }[] = [
   { id: "lab", label: "Taste Lab" },
   { id: "personas", label: "Personas" },
+  { id: "library", label: "Library" },
   { id: "results", label: "Results Explorer" },
 ];
 
@@ -61,6 +63,7 @@ export default function App() {
         {!error && !config && <div className="page"><div className="center-empty">Surveying the taste terrain…</div></div>}
         {config && view === "lab" && <TasteLab config={config} />}
         {config && view === "personas" && <Personas config={config} />}
+        {config && view === "library" && <Library config={config} />}
         {config && view === "results" && <Results />}
       </main>
     </>

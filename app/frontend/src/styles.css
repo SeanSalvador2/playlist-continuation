@@ -421,6 +421,51 @@ table.held td.small { font-size: 12px; color: var(--ink-2); }
 }
 .skip-link:focus { top: 12px; }
 
+/* ============================ library ================================== */
+.date-input {
+  font-family: var(--font-mono); font-size: 12px; padding: 5px 8px;
+  border-radius: var(--r-sm); border: 1px solid var(--hairline-2);
+  background: var(--surface); color: var(--ink); color-scheme: light dark;
+}
+
+table.lib-table td, table.lib-table th { padding: 8px 12px; }
+.share-bar {
+  display: inline-block; vertical-align: middle; width: 60px; height: 7px;
+  background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-right: 8px;
+}
+.share-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.share-pct { font-size: 10.5px; color: var(--ink-2); }
+
+.genre-mix { display: flex; flex-direction: column; gap: 6px; }
+.genre-row { display: grid; grid-template-columns: 74px 1fr 52px; gap: 8px; align-items: center; font-size: 11.5px; }
+.genre-row .k { color: var(--ink-2); }
+.genre-row .v { text-align: right; color: var(--muted); }
+.genre-bar { height: 9px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.genre-bar > span { display: block; height: 100%; border-radius: 4px; }
+
+.coverage-banner {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.03em;
+  color: var(--muted);
+}
+.coverage-banner.block {
+  display: block; margin-bottom: 12px; padding: 8px 10px; font-size: 11.5px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: var(--r-sm); color: var(--ink-2); letter-spacing: 0;
+  font-family: var(--font-body);
+}
+.coverage-banner.block b { color: var(--ink); }
+
+.axes-multiples { align-items: start; }
+.axis-multiple {
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  padding: 12px 14px; background: var(--surface-2);
+}
+.axis-multiple-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px; flex-wrap: wrap;
+}
+.axis-multiple-head strong { font-size: 13px; }
+
 .fade-in { animation: fadeIn .3s ease both; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
