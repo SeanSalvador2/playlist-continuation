@@ -30,6 +30,22 @@ from .detectors import (
     penalty_sweep,
     recommended_detector,
 )
+from .chapters import (
+    Chapter,
+    ChapterBoundary,
+    ChapterPlan,
+    SubSection,
+    adaptive_chapters,
+)
+from .cohorts import (
+    Cohort,
+    CohortModel,
+    adaptive_cast_size,
+    boundary_diff,
+    build_cohort,
+    cohorts_for_spans,
+    feature_shift_sentence,
+)
 from .eras import Era, build_eras
 from .eval import score_detections, segmentation_ari
 from .hierarchy import (
@@ -62,6 +78,9 @@ __all__ = [
     "Trajectory", "Component", "compute_trajectory", "human_label",
     "Era", "build_eras",
     "SegmentNode", "hierarchical_segments", "detail_ladder",
+    "ChapterPlan", "Chapter", "ChapterBoundary", "SubSection", "adaptive_chapters",
+    "CohortModel", "Cohort", "build_cohort", "cohorts_for_spans",
+    "adaptive_cast_size", "boundary_diff", "feature_shift_sentence",
     "StoryFacts", "Claim", "Slide", "Story", "StoryVerificationError",
     "gather_facts", "render_story", "verify_story",
 ]
