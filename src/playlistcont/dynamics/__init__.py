@@ -32,6 +32,11 @@ from .detectors import (
 )
 from .eras import Era, build_eras
 from .eval import score_detections, segmentation_ari
+from .hierarchy import (
+    SegmentNode,
+    detail_ladder,
+    hierarchical_segments,
+)
 from .flavors import FlavorModel, assign, fit_flavors
 from .story import (
     Claim,
@@ -56,6 +61,7 @@ __all__ = [
     # Phase 4: trajectory, eras, fact-checked story
     "Trajectory", "Component", "compute_trajectory", "human_label",
     "Era", "build_eras",
+    "SegmentNode", "hierarchical_segments", "detail_ladder",
     "StoryFacts", "Claim", "Slide", "Story", "StoryVerificationError",
     "gather_facts", "render_story", "verify_story",
 ]
