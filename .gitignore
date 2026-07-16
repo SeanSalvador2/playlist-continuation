@@ -21,3 +21,6 @@ app/frontend/.vite/
 # runs out of the box. Re-included over the global dist/ ignore above.
 !/app/frontend/dist/
 !/app/frontend/dist/**
+
+# Personal-data artifacts (his taste story etc.) — never commit
+scratchpad_artifact/
