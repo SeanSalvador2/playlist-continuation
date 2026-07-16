@@ -9,6 +9,13 @@ synthetic MPD, this fits a personal *listening history* into a
 
 Data source (honest by construction):
 
+* If ``PLAYLISTCONT_HISTORY_PICKLE`` points at a pickled, already-enriched
+  :class:`~playlistcont.history.schema.ListeningHistory` (built offline — audio-feature
+  axes and genre blocks already baked into the tracks), it is loaded directly and no
+  feature streaming or enrichment runs at startup.  This is the cheap way to serve a
+  large real history: enrichment is skipped (``enrichment`` is ``None``) because the
+  genres are already in the vectors.  Checked first, ahead of the export/synthetic
+  paths below.
 * By default a **synthetic demo listener** — ``make_synthetic_history(seed=7,
   n_days=730)`` — whose planted ground truth (taste-change dates, regimes) is surfaced
   in the summary payload so the UI can label the demo data as a demo.
@@ -54,8 +61,33 @@ _PROVENANCE_LABEL = {
 }
 
 
+def _load_pickled_history(path: str) -> ListeningHistory:
+    """Load a prebuilt, already-enriched :class:`ListeningHistory` from a pickle.
+
+    Lets the app serve a large real history without re-streaming audio features or
+    re-running genre enrichment at startup: the axis vectors (and any genre blocks)
+    are already baked into the tracks by an offline build step.  Only a
+    :class:`ListeningHistory` is accepted; any other payload is a configuration
+    error (the file is operator-supplied via ``PLAYLISTCONT_HISTORY_PICKLE``, same
+    trust model as the export/parquet paths).
+    """
+    import pickle
+
+    with open(path, "rb") as fh:
+        obj = pickle.load(fh)
+    if not isinstance(obj, ListeningHistory):
+        raise TypeError(
+            f"{path!r} did not contain a ListeningHistory (got {type(obj).__name__})")
+    return obj
+
+
 def _load_history() -> ListeningHistory:
-    """Load the configured history: a real export if pointed at one, else synthetic."""
+    """Load the configured history: a prebuilt enriched pickle if pointed at one,
+    else a real export if configured, else synthetic."""
+    pickle_path = os.environ.get("PLAYLISTCONT_HISTORY_PICKLE")
+    if pickle_path:
+        return _load_pickled_history(pickle_path)
+
     export = os.environ.get("PLAYLISTCONT_HISTORY_EXPORT")
     if not export:
         return make_synthetic_history(seed=SEED, n_days=N_DAYS)
@@ -79,6 +111,8 @@ def _maybe_enrich(history: ListeningHistory):
     :class:`EnrichmentReport` as a dict (plus ``extended_matched``), or
     ``{"error": ...}`` if the download/join failed — startup survives either way.
     """
+    if os.environ.get("PLAYLISTCONT_HISTORY_PICKLE"):
+        return None, []  # a prebuilt pickle is already enriched; never re-enrich
     if os.environ.get("PLAYLISTCONT_ENRICH") != "1":
         return None, []
     if history.provenance != "spotify_export":

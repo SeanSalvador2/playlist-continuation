@@ -260,6 +260,59 @@ def test_synthetic_history_untouched(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# prebuilt-pickle load path (serve a large enriched history without recompute)
+# ---------------------------------------------------------------------------
+def test_prebuilt_pickle_history_load(monkeypatch, tmp_path):
+    import pickle
+
+    from app.backend import history_engine
+
+    # a tiny already-enriched real history: give one track a full axis vector so
+    # the pickle stands in for a genuinely feature+genre-baked export.
+    h = _history(["Phoebe Bridgers", "Zach Bryan"])
+    vec = np.zeros(len(AXES), dtype=np.float32)
+    vec[_AX["energy"]] = 0.4
+    vec[_AX["genre:indie"]] = PRIMARY_GENRE_WEIGHT
+    h.tracks[_uri(1)].features = vec
+
+    path = tmp_path / "history_enriched.pkl"
+    with open(path, "wb") as fh:
+        pickle.dump(h, fh)
+
+    monkeypatch.setenv("PLAYLISTCONT_HISTORY_PICKLE", str(path))
+    # even with these set, the pickle path must win and must NOT re-stream/re-enrich
+    monkeypatch.setenv("PLAYLISTCONT_HISTORY_EXPORT", "/nonexistent/export.zip")
+    monkeypatch.setenv("PLAYLISTCONT_ENRICH", "1")
+    import playlistcont.enrichment.sources as sources
+
+    def _boom(*a, **k):
+        raise AssertionError("download attempted on the prebuilt-pickle path")
+
+    monkeypatch.setattr(sources, "_download", _boom)
+
+    loaded = history_engine._load_history()
+    assert loaded.provenance == "spotify_export"
+    assert loaded.n_tracks == 2
+    assert np.array_equal(loaded.tracks[_uri(1)].features, vec)
+    # enrichment is a no-op on the pickle path (genres already baked in)
+    payload, tag_rows = history_engine._maybe_enrich(loaded)
+    assert payload is None and tag_rows == []
+
+
+def test_prebuilt_pickle_rejects_non_history(monkeypatch, tmp_path):
+    import pickle
+
+    from app.backend import history_engine
+
+    path = tmp_path / "bad.pkl"
+    with open(path, "wb") as fh:
+        pickle.dump({"not": "a history"}, fh)
+    monkeypatch.setenv("PLAYLISTCONT_HISTORY_PICKLE", str(path))
+    with pytest.raises(TypeError):
+        history_engine._load_history()
+
+
+# ---------------------------------------------------------------------------
 # extended features: frame attach, table shape / nullability
 # ---------------------------------------------------------------------------
 def test_attach_extended_features_and_store_table(tmp_path):
