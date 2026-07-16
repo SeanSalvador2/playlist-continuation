@@ -72,16 +72,21 @@ def test_adaptive_cast_size_edges():
 
 def test_cast_sizes_stay_within_bounds():
     model = CohortModel.from_store(make_synthetic_history(seed=3, n_days=365))
-    cohort = build_cohort(model, date(2022, 1, 1), date(2022, 12, 31))
+    # a partial span so lift is meaningful (a whole-history span has uniform lift 1.0)
+    cohort = build_cohort(model, date(2022, 1, 1), date(2022, 4, 30))
     # the lift cast is bounded [4, 20] unless fewer artists qualify at all
     assert len(cohort.cast) <= 20
     if cohort.n_cast_qualifying >= 4:
         assert len(cohort.cast) >= 4
     else:
         assert len(cohort.cast) == cohort.n_cast_qualifying
-    # every lift-cast entry genuinely clears the materiality floor
+    ceiling = model.total / cohort.n_plays
+    floor = min(1.5, 0.6 * ceiling)
     for c in cohort.cast:
-        assert c["lift"] >= 1.5 and c["plays"] >= 15
+        # every entry clears the (ceiling-scaled) materiality floors
+        assert c["lift"] >= floor - 1e-9
+        assert c["plays"] >= 15
+        assert c["share"] >= 0.002 - 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -156,3 +161,66 @@ def test_determinism():
     a = build_cohort(model, date(2022, 1, 1), date(2022, 6, 30))
     b = build_cohort(model, date(2022, 1, 1), date(2022, 6, 30))
     assert a.to_payload() == b.to_payload()
+
+
+# ---------------------------------------------------------------------------
+# long-segment hardening: no ceiling ties, non-empty signatures, distinguishing genre
+# ---------------------------------------------------------------------------
+def _rock_then_long_country() -> ListeningHistory:
+    """A short rock era followed by a long country era that dominates the history.
+
+    Whole-history PLURALITY is country, so a plurality-based genre word would call the
+    rock era 'country' too; the distinguishing-genre rule must not.
+    """
+    regimes = [
+        RegimeSpec(date(2022, 1, 1), date(2022, 4, 1), {"classic rock": 1.0}, 40, "rock"),
+        RegimeSpec(date(2022, 4, 1), date(2023, 6, 1), {"sad slow country": 1.0}, 40, "country"),
+    ]
+    return make_synthetic_history(seed=4, regimes=regimes, n_days=516,
+                                  start_date=date(2022, 1, 1), include_traps=False,
+                                  seasonal=False)
+
+
+def test_long_segment_cast_has_no_ceiling_tie_block():
+    model = CohortModel.from_store(_rock_then_long_country())
+    # the long country segment (>= 8 weeks, thousands of plays)
+    cohort = build_cohort(model, date(2022, 4, 1), date(2023, 5, 31))
+    assert cohort.n_weeks >= 8 and cohort.n_plays >= 500
+    lifts = [c["lift"] for c in cohort.cast]
+    assert len(lifts) >= 4
+    # NOT a degenerate ceiling tie-block: shrunk lift spreads the cast out
+    assert len(set(lifts)) > 1
+    ceiling = round(model.total / cohort.n_plays, 4)
+    assert not all(abs(v - ceiling) < 1e-6 for v in lifts)
+
+
+def test_long_segment_signatures_are_never_empty():
+    model = CohortModel.from_store(_rock_then_long_country())
+    for span in [(date(2022, 1, 1), date(2022, 3, 31)),      # rock era
+                 (date(2022, 4, 1), date(2023, 5, 31))]:      # long country era
+        cohort = build_cohort(model, *span)
+        if cohort.n_weeks >= 8 and cohort.n_plays >= 500:
+            assert cohort.signature_tracks, f"empty signatures for {span}"
+
+
+def test_distinguishing_genre_beats_the_plurality_artifact():
+    model = CohortModel.from_store(_rock_then_long_country())
+    rock = build_cohort(model, date(2022, 1, 1), date(2022, 3, 31))
+    country = build_cohort(model, date(2022, 4, 1), date(2023, 5, 31), prev=rock)
+    # the rock era over-indexes on rock even though the WHOLE history is country-plurality
+    assert rock.genre_word is not None and "rock" in rock.genre_word
+    assert "country" not in rock.genre_word
+    assert country.genre_word is not None and "country" in country.genre_word
+
+
+def test_anchor_contrast_differentiates_adjacent_names():
+    from playlistcont.dynamics.cohorts import _distinct_anchors
+    raw = [{"artist": "Combs", "share": 0.30}, {"artist": "Wallen", "share": 0.28},
+           {"artist": "Bryan", "share": 0.10}]
+    # with no prior context the natural top-2 anchors are taken
+    assert _distinct_anchors(raw, []) == ["Combs", "Wallen"]
+    # sharing 'Combs' with the prior segment: swap to the near-share distinct 'Wallen'
+    assert _distinct_anchors(raw, ["Combs"])[0] == "Wallen"
+    # but a far-below alternative is NOT promoted just to differ
+    raw2 = [{"artist": "Combs", "share": 0.50}, {"artist": "Bryan", "share": 0.10}]
+    assert _distinct_anchors(raw2, ["Combs"])[0] == "Combs"

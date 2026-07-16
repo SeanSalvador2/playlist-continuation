@@ -9,11 +9,13 @@ WHAT A COHORT CARRIES
 ---------------------
 For a span ``[start, end)`` of the play stream:
 
-* an **adaptive lift cast** — artists whose *share within the span* is materially
-  higher than their *whole-history share* (``lift = seg_share / all_share``).  We
-  keep artists with ``lift >= 1.5`` **and** ``>= 15`` plays, then cut the sorted
-  lift list at its **largest relative gap** (an elbow), bounded to ``[4, 20]``.
-  These are the span's *distinctive* voices, not merely its loudest;
+* an **adaptive lift cast** — artists who over-index in the span vs the whole history.
+  Raw lift (``seg_share / all_share``) has a hard exclusivity ceiling that makes every
+  segment-exclusive artist tie — a 15-play one-off next to an 800-play staple — so we
+  use a **shrunk lift** (:data:`LIFT_ALPHA` pseudo-count) plus a **>= 0.2% segment-share**
+  floor to sink tiny one-offs, and a **ceiling-scaled lift floor** so long segments still
+  yield a non-empty cast/signature list.  The list is then cut at the **largest relative
+  gap** (an elbow), bounded ``[4, 20]``.  These are the span's *distinctive* voices;
 * a **raw-share cast** — the top-8 artists by plain play share, i.e. the span's
   *prominent* voices (what a listener would call the era after).  Naming anchors
   here, because lift saturates on long spans (every span-exclusive niche artist
@@ -30,8 +32,11 @@ For a span ``[start, end)`` of the play stream:
 
 THE >50% MONOLITH RULE and CLUSTER-MIX NAMING are ported verbatim: when one artist
 owns over half the span the name says so; the genre word in a name comes from the
-dominant co-listening cluster when clusters are supplied, else from the span's own
-dominant genre bucket.
+dominant co-listening cluster when clusters are supplied.  Without clusters the genre
+word is the span's **distinguishing** genre — the one that most over-indexes vs the
+whole history (``segment_share - whole_history_share``), not its plurality genre, so a
+country-plurality listener's rock era is not mislabelled "country".  Adjacent segments
+that share a top artist are differentiated by an anchor-contrast heuristic.
 """
 from __future__ import annotations
 
@@ -47,15 +52,35 @@ from ..history.schema import ListeningHistory
 from ..history.store import HistoryStore
 from .eras import _era_play_frame
 
-# adaptive-cast tuning (ported from Wave-5; see module docstring)
-CAST_MIN_LIFT = 1.5
+# adaptive-cast tuning (ported from Wave-5, then hardened for long segments)
+CAST_MIN_LIFT = 1.5             # fixed cast lift cap (see LIFT_ALPHA / ceiling floor)
 CAST_MIN_PLAYS = 15
+CAST_MIN_SHARE = 0.002          # >= 0.2% of the segment — sinks tiny one-offs on long spans
 CAST_BOUNDS = (4, 20)
-TRACK_MIN_LIFT = 2.0
+TRACK_MIN_LIFT = 2.0            # fixed track lift cap
 TRACK_MIN_PLAYS = 8
 TRACK_BOUNDS = (6, 30)
 SMALL_SAMPLE_WEEKS = 10.0
 MONOLITH_SHARE = 0.50
+
+# SMOOTHED (shrunk) LIFT.  Raw lift = seg_share / all_share has a hard exclusivity
+# ceiling of ``total / seg_plays``: EVERY segment-exclusive artist — a 15-play one-off
+# as much as an 800-play staple — ties there, so on a long segment the lift cast is a
+# degenerate tie-block of niche exclusives.  We shrink toward 1 with a pseudo-count:
+#
+#     lift* = (seg_plays + alpha) / (expected_plays + alpha),
+#     expected_plays = whole_history_share * seg_plays   (plays if the segment matched
+#                                                          the artist's global rate)
+#
+# A big exclusive (expected small, seg_plays large) still scores near the ceiling; a
+# 15-play one-off collapses toward 1.  alpha=20 (~ a fortnight of a daily habit) is the
+# count below which we distrust an artist's apparent exclusivity.
+LIFT_ALPHA = 20.0
+# SCALE-AWARE LIFT FLOOR.  On a long segment the ceiling itself can fall below the fixed
+# lift cap (e.g. ceiling 1.55 < 2.0), which would make the signature list unreachable and
+# empty.  We floor at ``min(fixed_cap, CEILING_FLOOR_FRAC * ceiling)`` so a long segment
+# always has a reachable bar and can never yield an empty signature list.
+CEILING_FLOOR_FRAC = 0.6
 
 
 def adaptive_cast_size(lifts: Sequence[float], lo: int, hi: int) -> int:
@@ -102,6 +127,7 @@ class Cohort:
     name_expanded: str
     explanation: str
     n_cast_qualifying: int = 0
+    genre_word: Optional[str] = None       # the span's distinguishing (not plurality) genre
     shift_swing: Optional[str] = None      # genre this span swung into vs the prior one
     shift_axes: List[str] = field(default_factory=list)  # <=2 lowercase mood-move phrases
 
@@ -126,6 +152,7 @@ class Cohort:
             "name_short": self.name_short,
             "name_expanded": self.name_expanded,
             "explanation": self.explanation,
+            "genre_word": self.genre_word,
             "shift_swing": self.shift_swing,
             "shift_axes": self.shift_axes,
             "cast": self.cast,
@@ -158,6 +185,7 @@ class CohortModel:
     uri_share_all: Dict[str, float]
     uri_label: Dict[str, str]
     total: int
+    all_genre_shares: np.ndarray = field(default_factory=lambda: np.zeros(len(GENRES)))
     cluster: Optional[np.ndarray] = None
     n_clusters: int = 0
     cluster_names: Dict[int, str] = field(default_factory=dict)
@@ -199,6 +227,15 @@ class CohortModel:
                 if uri[i] not in uri_label:
                     uri_label[uri[i]] = f"{track[i]} — {artist[i]}"
 
+        # whole-history genre-bucket shares over feature-plays (the null the
+        # distinguishing-genre naming compares each segment against)
+        all_genre_shares = np.zeros(len(GENRES))
+        if n:
+            fmask = has_feat & (gbucket >= 0)
+            if fmask.any():
+                all_genre_shares = (np.bincount(gbucket[fmask], minlength=len(GENRES))
+                                    / int(fmask.sum()))
+
         cluster = None
         n_clusters = 0
         if clusters is not None and n:
@@ -212,7 +249,8 @@ class CohortModel:
             dates_ord=dates_ord, artist=artist, track=track, uri=uri,
             has_feat=has_feat, is_first=is_first, scal=scal, gbucket=gbucket,
             art_share_all=art_share_all, uri_share_all=uri_share_all,
-            uri_label=uri_label, total=total, cluster=cluster, n_clusters=n_clusters,
+            uri_label=uri_label, total=total, all_genre_shares=all_genre_shares,
+            cluster=cluster, n_clusters=n_clusters,
             cluster_names=dict(cluster_names or {}),
             cluster_genres=dict(cluster_genres or {}))
 
@@ -224,18 +262,28 @@ class CohortModel:
 # =========================================================================== #
 # per-span computation
 # =========================================================================== #
+def _smoothed_lift(count: int, expected_plays: float) -> float:
+    """Shrunk lift: ``(count + alpha) / (expected_plays + alpha)`` (see LIFT_ALPHA)."""
+    return (count + LIFT_ALPHA) / (expected_plays + LIFT_ALPHA)
+
+
 def _cast_and_tracks(model: CohortModel, m: np.ndarray) -> Tuple[dict, int]:
     sp = int(m.sum())
     out = {"cast": [], "cast_raw": [], "tracks": [], "cast_size": 0, "signature_size": 0}
     if sp == 0:
         return out, 0
+    ceiling = model.total / sp                         # the exclusivity lift ceiling
+    cast_floor = min(CAST_MIN_LIFT, CEILING_FLOOR_FRAC * ceiling)
+    track_floor = min(TRACK_MIN_LIFT, CEILING_FLOOR_FRAC * ceiling)
+
     a_seg, a_c = np.unique(model.artist[m], return_counts=True)
     a_share = a_c / sp
     rows = []
     for a, c, s in zip(a_seg, a_c, a_share):
-        if c >= CAST_MIN_PLAYS:
-            lift = s / model.art_share_all[a]
-            if lift >= CAST_MIN_LIFT:
+        if c >= CAST_MIN_PLAYS and s >= CAST_MIN_SHARE:
+            expected = model.art_share_all[a] * sp     # plays if it matched its global rate
+            lift = _smoothed_lift(int(c), expected)
+            if lift >= cast_floor:
                 rows.append((str(a), lift, int(c), float(s)))
     rows.sort(key=lambda r: (-r[1], -r[2], r[0]))
     n_cast_total = len(rows)
@@ -252,8 +300,9 @@ def _cast_and_tracks(model: CohortModel, m: np.ndarray) -> Tuple[dict, int]:
     trows = []
     for u, c, s in zip(u_seg, u_c, u_share):
         if c >= TRACK_MIN_PLAYS:
-            lift = s / model.uri_share_all[u]
-            if lift >= TRACK_MIN_LIFT:
+            expected = model.uri_share_all[u] * sp
+            lift = _smoothed_lift(int(c), expected)
+            if lift >= track_floor:
                 trows.append((str(u), lift, int(c), float(s)))
     trows.sort(key=lambda r: (-r[1], -r[2], r[0]))
     tkeep = adaptive_cast_size([r[1] for r in trows], *TRACK_BOUNDS)
@@ -323,13 +372,68 @@ def _profile_top_genre(prof: dict) -> Optional[str]:
     return next(iter(gs), None) if gs else None
 
 
-def _genre_word(model: CohortModel, cmix: Optional[dict], prof: dict) -> Optional[str]:
-    """Genre word: the dominant co-listening cluster's genre when available, else the
-    span's own dominant genre bucket."""
+def _distinguishing_genre(model: CohortModel, m: np.ndarray) -> Optional[str]:
+    """The genre that most OVER-indexes vs the whole history (not the plurality genre).
+
+    A listener whose whole history is country-plurality would otherwise have every era
+    named "country".  We rank genres by ``segment_share - whole_history_share`` and take
+    the top over-indexed one, joining a comparable, also-positive runner-up as
+    ``"rock/pop"``.  When no genre over-indexes (the span is *less* distinctive than the
+    baseline everywhere), we fall back to the span's plurality genre.
+    """
+    fm = m & model.has_feat & (model.gbucket >= 0)
+    nf = int(fm.sum())
+    if not nf:
+        return None
+    seg = np.bincount(model.gbucket[fm], minlength=len(GENRES)) / nf
+    delta = seg - model.all_genre_shares
+    order = np.argsort(-delta)
+    g0 = int(order[0])
+    if delta[g0] <= 0:
+        return GENRES[int(np.argmax(seg))]
+    g1 = int(order[1])
+    if delta[g1] > 0 and delta[g1] >= 0.5 * delta[g0]:
+        return f"{GENRES[g0]}/{GENRES[g1]}"
+    return GENRES[g0]
+
+
+def _genre_word(model: CohortModel, cmix: Optional[dict], m: np.ndarray) -> Optional[str]:
+    """Genre word: the dominant co-listening cluster's genre when a cluster map is
+    supplied, else the span's DISTINGUISHING (over-indexed) genre."""
     cid, _ = _dom_cluster(cmix)
     if cid is not None and model.cluster_genres.get(cid):
         return model.cluster_genres[cid]
-    return _profile_top_genre(prof)
+    return _distinguishing_genre(model, m)
+
+
+def _distinct_anchors(raw: List[dict], prev_anchors: Sequence[str], n: int = 2,
+                      tol: float = 0.20) -> List[str]:
+    """Pick up to ``n`` name anchors, differentiating from the prior segment.
+
+    NAMING HEURISTIC: adjacent segments that share a top artist (e.g. Luke Combs in two
+    consecutive country eras) would otherwise get near-identical names.  When a natural
+    anchor also anchored the previous segment, we swap it for the next-ranked artist that
+    did NOT — but only if that alternative's raw share is within ``tol`` (20%) of the
+    natural pick's, so we never promote a marginal artist just to be different.
+    """
+    prev = set(prev_anchors or [])
+    picks: List[str] = []
+    used: set = set()
+    for _ in range(min(n, len(raw))):
+        natural = next((r for r in raw if r["artist"] not in used), None)
+        if natural is None:
+            break
+        chosen = natural
+        if natural["artist"] in prev:
+            for r in raw:
+                if r["artist"] in used or r["artist"] in prev:
+                    continue
+                if r["share"] >= (1.0 - tol) * natural["share"]:
+                    chosen = r
+                    break
+        picks.append(chosen["artist"])
+        used.add(chosen["artist"])
+    return picks
 
 
 _UP = {"acousticness": "more acoustic", "valence": "brighter", "lyrical_depth": "wordier",
@@ -357,15 +461,19 @@ def _article(n: int) -> str:
     return "An" if n in (8, 11, 18) else "A"
 
 
-def _names(model, cast, prof, cmix, prev_prof, prev_cmix, is_first) -> dict:
+def _names(model, cast, prof, cmix, prev_prof, gen, prev_gen, prev_anchors,
+           is_first) -> dict:
     raw = cast["cast_raw"]
     axes = prof["mean_axes"]
-    gen = _genre_word(model, cmix, prof)
-    prev_gen = _genre_word(model, prev_cmix, prev_prof) if prev_prof else None
     monolith = bool(raw and raw[0]["share"] > MONOLITH_SHARE)
     n = cast["cast_size"]
-    a1 = raw[0]["artist"] if raw else None
-    a2 = raw[1]["artist"] if len(raw) > 1 else None
+    # differentiate anchors from the prior segment (heuristic; monolith keeps its owner)
+    if monolith:
+        a1, a2 = raw[0]["artist"], (raw[1]["artist"] if len(raw) > 1 else None)
+    else:
+        anchors = _distinct_anchors(raw, prev_anchors)
+        a1 = anchors[0] if anchors else None
+        a2 = anchors[1] if len(anchors) > 1 else None
 
     # ---- name_short (<= 4 words)
     if monolith:
@@ -417,7 +525,7 @@ def _names(model, cast, prof, cmix, prev_prof, prev_cmix, is_first) -> dict:
                 f"({int(sh * 100)}%).") if cid is not None else ""
     explanation = " ".join(x for x in [s1, s2, fact] if x)
     return {"name_short": short, "name_expanded": exp, "explanation": explanation,
-            "shift_swing": swing, "shift_axes": ax_shifts}
+            "genre_word": gen, "shift_swing": swing, "shift_axes": ax_shifts}
 
 
 def build_cohort(
@@ -436,9 +544,11 @@ def build_cohort(
     cast, n_cast_total = _cast_and_tracks(model, m)
     prof = _feature_profile(model, m, start, end_excl)
     cmix = _cluster_mix(model, m)
+    gen = _genre_word(model, cmix, m)
     prev_prof = prev.feature_profile if prev else None
-    prev_cmix = prev.cluster_mix if prev else None
-    nm = _names(model, cast, prof, cmix, prev_prof, prev_cmix, is_first)
+    prev_gen = prev.genre_word if prev else None
+    prev_anchors = [r["artist"] for r in prev.cast_raw[:3]] if prev else []
+    nm = _names(model, cast, prof, cmix, prev_prof, gen, prev_gen, prev_anchors, is_first)
     n_weeks = round((end_excl - start).days / 7, 1)
     return Cohort(
         start=start, end=end_incl, n_plays=int(m.sum()), n_weeks=n_weeks,
@@ -446,8 +556,8 @@ def build_cohort(
         cast_raw=cast["cast_raw"], signature_tracks=cast["tracks"],
         feature_profile=prof, cluster_mix=cmix, name_short=nm["name_short"],
         name_expanded=nm["name_expanded"], explanation=nm["explanation"],
-        n_cast_qualifying=n_cast_total, shift_swing=nm["shift_swing"],
-        shift_axes=list(nm["shift_axes"]))
+        n_cast_qualifying=n_cast_total, genre_word=nm["genre_word"],
+        shift_swing=nm["shift_swing"], shift_axes=list(nm["shift_axes"]))
 
 
 def cohorts_for_spans(
