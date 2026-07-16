@@ -137,12 +137,63 @@ def _flank_windows(eras: List[Era], i: int, cap: int = 56):
     return a_start, a_end, b_start, b_end
 
 
+def _attach_sub_beats(fact: dict, era_index: int, chapter_plan, sub_cohorts) -> None:
+    """Attach a chapter ``headline`` and per-sub-section ``sub_beats`` to an era fact.
+
+    No-op unless both a ``ChapterPlan`` and the matching per-era cohort list are given.
+    Each sub-beat records only display-ready, number-free-or-claimable values: the
+    ensemble ``name_short``, up to three prominent cast names, and a lowercase shift
+    phrase (empty for the opening sub-section).
+    """
+    if chapter_plan is None or sub_cohorts is None:
+        return
+    chapters = getattr(chapter_plan, "chapters", None)
+    if not chapters or era_index >= len(chapters) or era_index >= len(sub_cohorts):
+        return
+    fact["headline"] = chapters[era_index].headline()
+    beats = []
+    for cohort in sub_cohorts[era_index]:
+        beats.append({
+            "name_short": cohort.name_short,
+            "cast": list(cohort.top_artists[:3]),
+            "shift_swing": cohort.shift_swing,
+            "shift_axes": list(cohort.shift_axes),
+        })
+    fact["sub_beats"] = beats
+
+
+def _shift_clause(swing, axes) -> str:
+    """A grammatical, lowercase, number-free 'moved vs the prior beat' clause (or '').
+
+    ``"It swung toward country and leaned more acoustic, calmer."``-style — a genre
+    swing takes a verb of its own, mood moves are adjectives under one verb, so the
+    two never collide into "moved swung".
+    """
+    moves = []
+    if swing:
+        moves.append(f"swung toward {swing}")
+    if axes:
+        moves.append("leaned " + ", ".join(axes))
+    return ("It " + " and ".join(moves) + ".") if moves else ""
+
+
 def gather_facts(
     history_or_store: Union[ListeningHistory, HistoryStore],
     eras: List[Era],
     detections: Optional[Sequence[DetectedChange]] = None,
+    chapter_plan=None,
+    sub_cohorts=None,
 ) -> StoryFacts:
-    """Compute every number and name the story may use (see the module docstring)."""
+    """Compute every number and name the story may use (see the module docstring).
+
+    SUB-CHAPTER NARRATIVE (additive, opt-in).  When ``chapter_plan`` (a
+    :class:`~playlistcont.dynamics.chapters.ChapterPlan`) and ``sub_cohorts`` (a list,
+    one entry per era, each a list of :class:`~playlistcont.dynamics.cohorts.Cohort`
+    for that chapter's sub-sections) are supplied, each era fact gains a computed
+    ``headline`` (chapter shape, e.g. "one clear turn") and a ``sub_beats`` list —
+    the ensemble name, prominent cast and shift phrase per sub-section.  These flow
+    through the same :func:`verify_story` harness as every other claim.
+    """
     store = (history_or_store if isinstance(history_or_store, HistoryStore)
              else HistoryStore.from_history(history_or_store))
 
@@ -154,7 +205,7 @@ def gather_facts(
 
     era_facts: List[dict] = []
     for e in eras:
-        era_facts.append({
+        fact = {
             "number": e.index + 1,
             "name": e.name,
             "start": e.start.isoformat(),
@@ -167,7 +218,9 @@ def gather_facts(
             "top_artists": [a["name"] for a in e.top_artists],
             "top_tracks": [t["name"] for t in e.top_tracks],
             "mean_axes": {k: round(v, 2) for k, v in e.mean_axes.items()},
-        })
+        }
+        _attach_sub_beats(fact, e.index, chapter_plan, sub_cohorts)
+        era_facts.append(fact)
 
     # ---- boundary facts: FDR-surviving shifts across each change ---------- #
     boundary_facts: List[dict] = []
@@ -349,6 +402,46 @@ def _era_slide(facts: StoryFacts, i: int) -> Slide:
                           "top_artists": e["top_artists"], "mean_axes": ax})
 
 
+def _join_names(names: List[str]) -> str:
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def _chapter_detail_slide(facts: StoryFacts, i: int) -> Slide:
+    """A sub-chapter beat sheet: chapter-shape headline + one line per sub-section.
+
+    Copy is COMPUTED from structure (the headline is the chapter's turn count, never
+    hardcoded).  Every ensemble name and cast member is backed by a claim; the shift
+    phrase is a lowercase, number-free clause so it needs none.
+    """
+    e = facts.data["eras"][i]
+    p = f"eras.{i}"
+    headline = e["headline"]
+    body = [f"This chapter was {headline}."]
+    claims: List[Claim] = []
+
+    for j, beat in enumerate(e["sub_beats"]):
+        bp = f"{p}.sub_beats.{j}"
+        name = beat["name_short"]
+        cast = beat["cast"]
+        if cast:
+            body.append(f"{name}: {_join_names(cast)}.")
+        else:
+            body.append(f"{name}.")
+        claims.append(_c(name, f"{bp}.name_short", facts))
+        for k, a in enumerate(cast):
+            claims.append(_c(a, f"{bp}.cast.{k}", facts))
+        clause = _shift_clause(beat["shift_swing"], beat["shift_axes"])
+        if clause:
+            body.append(clause)
+
+    return Slide("chapter_detail", "The shape of this chapter", body, claims,
+                 payload={"index": i, "headline": headline, "sub_beats": e["sub_beats"]})
+
+
 def _shift_verb(direction) -> str:
     if direction == "up":
         return "rose"
@@ -429,6 +522,8 @@ def _template_slides(facts: StoryFacts) -> List[Slide]:
     n = facts.data["meta"]["n_eras"]
     for i in range(n):
         slides.append(_era_slide(facts, i))
+        if "sub_beats" in facts.data["eras"][i]:
+            slides.append(_chapter_detail_slide(facts, i))
         if i < len(facts.data["boundaries"]):
             slides.append(_transition_slide(facts, i))
     if n:

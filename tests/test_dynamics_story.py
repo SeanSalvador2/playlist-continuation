@@ -29,6 +29,8 @@ from playlistcont.dynamics import (
     DetectedChange, build_eras, build_windows, compute_trajectory,
     gather_facts, human_label, recommended_detector, render_story, verify_story,
 )
+from playlistcont.dynamics.chapters import adaptive_chapters
+from playlistcont.dynamics.cohorts import CohortModel, cohorts_for_spans
 from playlistcont.dynamics.story import StoryVerificationError
 from playlistcont.dynamics.windows import WindowSeries
 from playlistcont.history.schema import RegimeSpec
@@ -306,3 +308,51 @@ def test_gather_facts_arc_and_boundaries_are_consistent():
     # arc's biggest shift really is the max |effect| across boundary shifts
     all_effects = [abs(s["effect"]) for b in data["boundaries"] for s in b["shifts"]]
     assert abs(data["arc"]["biggest_shift"]["effect"]) == max(all_effects)
+
+
+# ===========================================================================
+# 4. sub-chapter narrative (ChapterPlan + cohorts -> sub-beats), additive
+# ===========================================================================
+def _subbeat_story():
+    h = make_synthetic_history(seed=7, n_days=730)
+    ws = build_windows(h, granularity="week", min_events=30)
+    plan = adaptive_chapters(ws)
+    det = plan.as_detections()
+    eras = build_eras(h, det, flavor_model=ws.flavor_model)
+    model = CohortModel.from_store(h)
+    sub_cohorts = [cohorts_for_spans(model, [(s.start, s.end) for s in ch.subsections])
+                   for ch in plan.chapters]
+    facts = gather_facts(h, eras, det, chapter_plan=plan, sub_cohorts=sub_cohorts)
+    return plan, facts, render_story(facts)
+
+
+def test_sub_beats_render_and_survive_the_fact_check():
+    plan, facts, story = _subbeat_story()
+    details = [s for s in story.slides if s.kind == "chapter_detail"]
+    # one chapter-detail slide per chapter, each backed by claims
+    assert len(details) == len(plan.chapters)
+    for s in details:
+        assert s.claims                                   # ensemble names / cast are audited
+    verify_story(story, facts)                            # the whole thing survives its audit
+
+
+def test_sub_beat_headlines_are_computed_from_structure():
+    plan, facts, _ = _subbeat_story()
+    for i, ch in enumerate(plan.chapters):
+        headline = facts.data["eras"][i]["headline"]
+        assert headline == ch.headline()
+        n = ch.n_turns
+        if n == 0:
+            assert headline == "a slow drift — no sharp turn"
+        elif n == 1:
+            assert headline == "one clear turn"
+        else:
+            assert headline.endswith("turns")
+
+
+def test_sub_beats_are_opt_in_and_backward_compatible():
+    # without a ChapterPlan, gather_facts adds no sub-beat keys and the slide set
+    # is exactly the classic title/era/transition/arc sequence
+    facts, story = _small_story()
+    assert all("sub_beats" not in e and "headline" not in e for e in facts.data["eras"])
+    assert not any(s.kind == "chapter_detail" for s in story.slides)
