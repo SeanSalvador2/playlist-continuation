@@ -328,6 +328,12 @@ def _http_get(url: str, timeout: float = 15.0) -> _HttpResult:
         return _HttpResult(e.code, body)
     except urllib.error.URLError as e:
         raise LyricsFetchError(f"network error contacting LRCLIB: {e.reason}") from e
+    except (TimeoutError, OSError) as e:
+        # A read/connect timeout or reset during getresponse()/read() is raised
+        # as a bare TimeoutError (or other OSError) on some platforms — NOT wrapped
+        # in URLError — so catch it here and let the retry/backoff layer handle it
+        # instead of crashing the whole run.
+        raise LyricsFetchError(f"network error contacting LRCLIB: {e}") from e
 
 
 def _backoff_sleep(attempt: int) -> None:
@@ -522,7 +528,10 @@ def run(args: argparse.Namespace) -> Dict[str, int]:
 
             try:
                 result = fetch_lyrics(t, delay=args.delay, max_retries=args.max_retries)
-            except LyricsFetchError as e:
+            except Exception as e:
+                # Never let one track (a network blip, an odd response, anything)
+                # kill a multi-hour run — log it as a failure and keep going.
+                # No cache file is written, so a rerun retries it automatically.
                 stats["attempted"] += 1
                 stats["errors"] += 1
                 stats["failed"] += 1
