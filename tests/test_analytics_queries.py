@@ -83,7 +83,9 @@ def test_summary_empty_window():
     got = q.summary(st, date(2019, 1, 1), date(2019, 1, 2))
     assert got["total_plays"] == 0
     assert got["span"] is None
-    assert got["skip_rate"] == 0.0 and got["plays_per_day"] == 0.0
+    # no plays in the window -> no measurable skip rate (null, not a fake 0%)
+    assert got["skip_rate"] is None and got["plays_per_day"] == 0.0
+    assert got["skip_coverage"] == 0.0
     st.close()
 
 

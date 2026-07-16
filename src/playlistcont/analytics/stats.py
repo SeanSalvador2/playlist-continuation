@@ -71,6 +71,7 @@ from scipy import stats
 
 from ..data.schema import GENRES, SCALAR_AXES
 from ..history.store import HistoryStore, feature_column
+from .queries import resolve_tz, skip_reliable_from
 
 DateLike = Union[str, date, datetime, None]
 
@@ -238,12 +239,23 @@ def epsilon_squared_kw(h: float, n: int) -> float:
 # ===========================================================================
 # data loading — pull per-play frames ONCE, slice by date in pandas
 # ===========================================================================
-def _feature_frame(store: HistoryStore):
-    """Per-play rows that have features: ``d`` (date), scalar cols, genre cols, genre_bucket."""
+def _feature_frame(store: HistoryStore, tz: Optional[str] = None):
+    """Per-play rows that have features: ``d`` (date), scalar cols, genre cols, genre_bucket.
+
+    ``hour``/``weekday`` are derived from the timestamp **in the display timezone**
+    (:func:`~playlistcont.analytics.queries.resolve_tz`), so weekday/hour-band habit
+    grouping reflects local wall-clock time rather than the stored UTC hour; DuckDB
+    ``AT TIME ZONE`` handles DST per-timestamp.  ``tz="UTC"`` reproduces the stored
+    columns exactly.  The stored events table is not modified.
+    """
+    zone = resolve_tz(tz)
     cols = ", ".join(f"f.{c} AS {c}" for c in SCALAR_COLUMNS + GENRE_COLUMNS)
     df = store.query(
         f"""
-        SELECT e.date AS d, e.hour AS hour, e.weekday AS weekday, {cols}
+        SELECT e.date AS d,
+               hour(e.ts AT TIME ZONE '{zone}')         AS hour,
+               (isodow(e.ts AT TIME ZONE '{zone}') - 1) AS weekday,
+               {cols}
         FROM events e JOIN track_features f ON e.track_uri = f.uri
         ORDER BY e.event_id
         """
@@ -309,14 +321,25 @@ def _window_days(start: Optional[date], end: Optional[date], sub) -> int:
     return (hi - lo).days + 1
 
 
-def _behavior(sub) -> dict:
-    """Behaviour counts for one window slice of the event frame."""
+def _behavior(sub, skip_from: Optional[date] = None) -> dict:
+    """Behaviour counts for one window slice of the event frame.
+
+    Skip counts are taken only over plays on/after ``skip_from`` (the skip-reliable start
+    from :func:`~playlistcont.analytics.queries.skip_reliable_from`); plays before it carry
+    a uniform ``skipped=false`` that predates Spotify logging skips and must not be counted.
+    When ``skip_from`` is ``None`` (no reliable window at all) no play is skip-flagged, so
+    the skip test degrades to "not recorded" (insufficient) rather than a fake 0%.
+    """
     n = len(sub)
     if not n:
         return {"plays": 0, "skip_flagged": 0, "skips": 0, "firsts": 0}
-    skipped = sub["skipped"]
-    flagged = int(skipped.notna().sum())
-    skips = int((skipped == True).sum())  # noqa: E712  (nullable-bool safe)
+    if skip_from is None:
+        flagged = skips = 0
+    else:
+        rel = sub[sub["d"].to_numpy() >= skip_from]
+        skipped = rel["skipped"]
+        flagged = int(skipped.notna().sum())
+        skips = int((skipped == True).sum())  # noqa: E712  (nullable-bool safe)
     firsts = int((sub["is_first"] == True).sum())  # noqa: E712
     return {"plays": n, "skip_flagged": flagged, "skips": skips, "firsts": firsts}
 
@@ -537,13 +560,14 @@ def compare_windows(
     """
     feat = _feature_frame(store)
     ev = _event_frame(store)
+    skip_from = skip_reliable_from(store)
     a_s, a_e = _as_date(a_start), _as_date(a_end)
     b_s, b_e = _as_date(b_start), _as_date(b_end)
 
     a_feat, b_feat = _slice(feat, a_s, a_e), _slice(feat, b_s, b_e)
     a_ev, b_ev = _slice(ev, a_s, a_e), _slice(ev, b_s, b_e)
     records = _compare_core(
-        a_feat, b_feat, _behavior(a_ev), _behavior(b_ev),
+        a_feat, b_feat, _behavior(a_ev, skip_from), _behavior(b_ev, skip_from),
         _window_days(a_s, a_e, a_ev), _window_days(b_s, b_e, b_ev), metrics=metrics,
     )
     return {
@@ -732,19 +756,22 @@ def habit_anova(
     start: DateLike = None,
     end: DateLike = None,
     group_by: str = "weekday",
+    tz: Optional[str] = None,
 ) -> dict:
     """Do the taste axes differ across ``group_by`` groups within the window?
 
     ``group_by`` is ``"weekday"`` (Mon..Sun), ``"hour_band"`` (morning/afternoon/
     evening/night — bounds in the module docstring) or ``"month"`` (calendar month).
-    Per scalar axis: **Welch's ANOVA** (real unequal-variance F, :func:`welch_anova`)
-    **and** Kruskal-Wallis, with an epsilon-squared effect size (``H/(n-1)``).  Welch
-    p-values are BH-corrected across the five axes; a survivor needs ``q < 0.05`` and
-    ``epsilon² >= 0.01``.  Groups with fewer than 15 plays are dropped; axes with fewer
-    than two usable groups are reported as insufficient.  Survivors get plain-English
-    summaries.
+    Weekday and hour-band groups are computed in the display timezone ``tz``
+    (:func:`~playlistcont.analytics.queries.resolve_tz`; env ``PLAYLISTCONT_TZ`` / UTC by
+    default), so "evening" means local evening, not UTC.  Per scalar axis: **Welch's
+    ANOVA** (real unequal-variance F, :func:`welch_anova`) **and** Kruskal-Wallis, with an
+    epsilon-squared effect size (``H/(n-1)``).  Welch p-values are BH-corrected across the
+    five axes; a survivor needs ``q < 0.05`` and ``epsilon² >= 0.01``.  Groups with fewer
+    than 15 plays are dropped; axes with fewer than two usable groups are reported as
+    insufficient.  Survivors get plain-English summaries.
     """
-    feat = _feature_frame(store)
+    feat = _feature_frame(store, tz=tz)
     feat = _slice(feat, _as_date(start), _as_date(end))
     labels = _group_labels(feat, group_by) if len(feat) else np.array([])
 
@@ -866,6 +893,7 @@ def adjacent_scan(
     """
     feat = _feature_frame(store)
     ev = _event_frame(store)
+    skip_from = skip_reliable_from(store)
     if not len(feat):
         return {"granularity": granularity, "metrics": metrics,
                 "q_threshold": q_threshold, "family_size": 0, "boundaries": []}
@@ -887,7 +915,7 @@ def adjacent_scan(
         a_feat, b_feat = _slice(feat, a_s, a_e), _slice(feat, b_s, b_e)
         a_ev, b_ev = _slice(ev, a_s, a_e), _slice(ev, b_s, b_e)
         recs = _compare_core(
-            a_feat, b_feat, _behavior(a_ev), _behavior(b_ev),
+            a_feat, b_feat, _behavior(a_ev, skip_from), _behavior(b_ev, skip_from),
             _window_days(a_s, a_e, a_ev), _window_days(b_s, b_e, b_ev), metrics=metrics,
         )
         tested = [r for r in recs if r["p_raw"] is not None]

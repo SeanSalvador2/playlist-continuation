@@ -202,9 +202,9 @@ class HistoryAtlas:
             return queries.trends(self.store, metric=metric, granularity=granularity,
                                   start=start, end=end, rolling=rolling)
 
-    def listening_clock(self, start=None, end=None) -> dict:
+    def listening_clock(self, start=None, end=None, tz=None) -> dict:
         with self._lock:
-            return queries.listening_clock(self.store, start=start, end=end)
+            return queries.listening_clock(self.store, start=start, end=end, tz=tz)
 
     def axes_over_time(self, granularity="week", start=None, end=None) -> dict:
         with self._lock:
@@ -247,9 +247,10 @@ class HistoryAtlas:
         payload["mode"] = mode
         return payload
 
-    def habits(self, group_by="weekday", start=None, end=None) -> dict:
+    def habits(self, group_by="weekday", start=None, end=None, tz=None) -> dict:
         with self._lock:
-            return stats.habit_anova(self.store, start=start, end=end, group_by=group_by)
+            return stats.habit_anova(self.store, start=start, end=end,
+                                     group_by=group_by, tz=tz)
 
     # ------------------------------------------------------------------ #
     #  Phase 4: the taste journey (trajectory + named eras + fact-checked story)

@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 from datetime import date, datetime
 from typing import Dict, List, Optional, Sequence, Union
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 
@@ -40,10 +42,67 @@ DateLike = Union[str, date, datetime, None]
 SCALAR_COLUMNS: List[str] = [feature_column(a) for a in SCALAR_AXES]
 GENRE_COLUMNS: List[str] = [feature_column(f"genre:{g}") for g in GENRES]
 
-_TRUNC = {"day": "day", "week": "week", "month": "month"}
+# ``year`` lets a multi-year history bucket by calendar year; date_trunc('year', ...)
+# is native DuckDB and the rolling-mean/coverage code downstream is granularity-agnostic.
+_TRUNC = {"day": "day", "week": "week", "month": "month", "year": "year"}
 _WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 MS_PER_MIN = 60_000.0
+
+# Skip-reliability heuristic (Bug 1): Spotify only began populating a real ``skipped``
+# flag partway through many long histories; before that point every play carries
+# ``skipped=false`` (non-null but uniformly unset), so the raw skip rate reads as a flat
+# 0% and then jumps.  We treat skip logging as having *begun* at the first calendar month
+# whose true-skip fraction (skips / plays-with-a-flag) exceeds this small threshold, and
+# consider the flag trustworthy from that month onward.  1% is deliberately low: real
+# skip rates run tens of percent, while the pre-logging period is exactly 0%, so any
+# reasonable small floor separates them cleanly.  This is data-driven, not hardcoded to
+# any user's dates.
+SKIP_RELIABLE_THRESHOLD = 0.01
+
+
+def skip_reliable_from(
+    store: HistoryStore, threshold: float = SKIP_RELIABLE_THRESHOLD
+) -> Optional[date]:
+    """First day from which the ``skipped`` flag is trustworthy, or ``None``.
+
+    Groups the whole history by calendar month, computes each month's true-skip fraction
+    over plays carrying a non-null flag, and returns the first day of the earliest month
+    whose fraction exceeds ``threshold``.  Returns ``None`` when no month clears it — a
+    basic export with no skip flag at all, or a history recorded entirely before Spotify
+    began logging skips.  Window-independent: it is a property of the full stream.
+    """
+    df = store.query(
+        """
+        SELECT date_trunc('month', date) AS m,
+               COUNT(skipped)                                    AS flagged,
+               COALESCE(SUM(CASE WHEN skipped THEN 1 ELSE 0 END), 0) AS skips
+        FROM events
+        GROUP BY m ORDER BY m
+        """
+    )
+    for _, r in df.iterrows():
+        flagged = int(r["flagged"])
+        if flagged and (int(r["skips"]) / flagged) > threshold:
+            return pd.Timestamp(r["m"]).date()
+    return None
+
+
+def resolve_tz(tz: Optional[str] = None) -> str:
+    """Resolve a display timezone to a validated IANA name.
+
+    Order: an explicit ``tz`` argument, else ``$PLAYLISTCONT_TZ``, else ``"UTC"``.  The
+    chosen name is validated with :mod:`zoneinfo`; an unknown zone falls back to
+    ``"UTC"`` rather than raising, so a bad env var can never break a query.  The offset
+    is applied per-timestamp at query time (DuckDB ``AT TIME ZONE``), so DST is handled
+    correctly — the stored UTC events table is never modified.
+    """
+    name = tz or os.environ.get("PLAYLISTCONT_TZ") or "UTC"
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        return "UTC"
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -98,27 +157,57 @@ def _span(store: HistoryStore, start: DateLike, end: DateLike) -> Optional[dict]
 def summary(store: HistoryStore, start: DateLike = None, end: DateLike = None) -> dict:
     """Headline stats for the window: span, plays, minutes, distinct counts, skip rate.
 
-    ``skip_rate`` is over events that carry a non-null skip flag (a real *basic* export
-    has none, so it degrades to ``0.0`` with ``skip_flagged == 0``).  ``plays_per_day``
-    divides total plays by the number of **calendar days** in the observed span
-    (inclusive), not by the number of days with any listening.
+    ``skip_rate`` is computed **only over the skip-reliable window** — the span from
+    :func:`skip_reliable_from` (where Spotify's flag is trustworthy) to the end — never
+    over the pre-logging period whose uniform ``skipped=false`` would fake a 0% rate.
+    ``skip_reliable_from`` (an ISO date or ``null``) and ``skip_coverage`` (the share of
+    this window's plays that fall in the reliable span) let the UI caveat the number; when
+    no reliable window exists ``skip_rate`` is ``null`` and ``skip_reason`` explains why.
+    ``plays_per_day`` divides total plays by the number of **calendar days** in the
+    observed span (inclusive), not by the number of days with any listening.
     """
     where = _where(_predicates(start, end))
     row = store.query(
         f"""
         SELECT
-          COUNT(*)                                   AS plays,
-          COALESCE(SUM(ms_played), 0)                AS ms,
-          COUNT(DISTINCT track_uri)                  AS tracks,
-          COUNT(skipped)                             AS skip_flagged,
-          COALESCE(SUM(CASE WHEN skipped THEN 1 ELSE 0 END), 0) AS skips
+          COUNT(*)                    AS plays,
+          COALESCE(SUM(ms_played), 0) AS ms,
+          COUNT(DISTINCT track_uri)   AS tracks
         FROM events {where}
         """
     ).iloc[0]
     plays = int(row["plays"])
     minutes = float(row["ms"]) / MS_PER_MIN
-    skip_flagged = int(row["skip_flagged"])
-    skips = int(row["skips"])
+
+    # skip metrics: restrict to the reliable window intersected with the request window.
+    reliable = skip_reliable_from(store)
+    if reliable is None:
+        skip_flagged = skips = 0
+        skip_rate: Optional[float] = None
+        skip_coverage = 0.0
+        skip_reason: Optional[str] = "Spotify recorded no skips in this history"
+    else:
+        skip_preds = _predicates(start, end) + [f"date >= DATE '{reliable.isoformat()}'"]
+        srow = store.query(
+            f"""
+            SELECT
+              COUNT(*)       AS rel_plays,
+              COUNT(skipped) AS flagged,
+              COALESCE(SUM(CASE WHEN skipped THEN 1 ELSE 0 END), 0) AS skips
+            FROM events {_where(skip_preds)}
+            """
+        ).iloc[0]
+        rel_plays = int(srow["rel_plays"])
+        skip_flagged = int(srow["flagged"])
+        skips = int(srow["skips"])
+        skip_coverage = round(rel_plays / plays, 4) if plays else 0.0
+        if skip_flagged:
+            skip_rate = round(skips / skip_flagged, 4)
+            skip_reason = None
+        else:
+            skip_rate = None
+            skip_reason = "no skip-flagged plays in the reliable window"
+
     where_e = _where(_predicates(start, end, col="e.date"))
     artists = store.query(
         f"""
@@ -137,7 +226,10 @@ def summary(store: HistoryStore, start: DateLike = None, end: DateLike = None) -
         "distinct_tracks": int(row["tracks"]),
         "distinct_artists": int(artists),
         "skip_flagged": skip_flagged,
-        "skip_rate": round(skips / skip_flagged, 4) if skip_flagged else 0.0,
+        "skip_rate": skip_rate,
+        "skip_reliable_from": reliable.isoformat() if reliable else None,
+        "skip_coverage": skip_coverage,
+        "skip_reason": skip_reason,
         "plays_per_day": round(per_day, 3),
     }
 
@@ -253,6 +345,7 @@ def trends(
         raise ValueError(f"unknown metric {metric!r}")
     trunc = _TRUNC[granularity]
     where = _where(_predicates(start, end, col="e.date"))
+    skip_from: Optional[date] = None
 
     if metric == "discovery":
         df = store.query(
@@ -273,19 +366,36 @@ def trends(
             for _, r in df.iterrows()
         ]
     elif metric == "skip_rate":
-        df = store.query(
-            f"""
-            SELECT date_trunc('{trunc}', e.date) AS bucket,
-                   COUNT(skipped) AS flagged,
-                   SUM(CASE WHEN skipped THEN 1 ELSE 0 END) AS skips
-            FROM events e {where}
-            GROUP BY bucket ORDER BY bucket
-            """
-        )
-        values = [
-            (float(r["skips"]) / float(r["flagged"])) if r["flagged"] else 0.0
-            for _, r in df.iterrows()
-        ]
+        # Buckets are formed over ALL plays (so pre-logging buckets still appear and can
+        # be greyed out), but the skip rate itself is computed only over plays inside the
+        # reliable window; a bucket with no reliable-flagged plays yields ``None`` (not a
+        # fake 0.0) so the chart can annotate the pre-logging region honestly.
+        skip_from = skip_reliable_from(store)
+        if skip_from is None:
+            df = store.query(
+                f"""
+                SELECT date_trunc('{trunc}', e.date) AS bucket, COUNT(*) AS n
+                FROM events e {where}
+                GROUP BY bucket ORDER BY bucket
+                """
+            )
+            values = [None] * len(df)
+        else:
+            rel = skip_from.isoformat()
+            df = store.query(
+                f"""
+                SELECT date_trunc('{trunc}', e.date) AS bucket,
+                       COUNT(skipped) FILTER (WHERE e.date >= DATE '{rel}') AS flagged,
+                       COALESCE(SUM(CASE WHEN e.skipped AND e.date >= DATE '{rel}'
+                                         THEN 1 ELSE 0 END), 0) AS skips
+                FROM events e {where}
+                GROUP BY bucket ORDER BY bucket
+                """
+            )
+            values = [
+                (float(r["skips"]) / float(r["flagged"])) if int(r["flagged"]) else None
+                for _, r in df.iterrows()
+            ]
     else:
         expr = "COUNT(*)" if metric == "plays" else f"SUM(e.ms_played) / {MS_PER_MIN}"
         df = store.query(
@@ -301,12 +411,15 @@ def trends(
     roll: List[Optional[float]] = [None] * len(values)
     k = int(rolling) if rolling else 0
     if k and k > 1 and values:
-        s = pd.Series(values).rolling(k, center=True, min_periods=1).mean()
-        roll = [round(float(v), 4) for v in s]
+        # None values (pre-skip-logging buckets) become NaN so they neither count toward
+        # nor corrupt the centred mean; the rolling value stays None wherever it lands.
+        s = pd.Series([float("nan") if v is None else v for v in values])
+        rm = s.rolling(k, center=True, min_periods=1).mean()
+        roll = [None if pd.isna(v) else round(float(v), 4) for v in rm]
 
     out_rows = []
     for i, (b, v) in enumerate(zip(buckets, values)):
-        row = {"bucket": b, "value": round(v, 4)}
+        row = {"bucket": b, "value": None if v is None else round(v, 4)}
         if k and k > 1:
             row["rolling"] = roll[i]
         out_rows.append(row)
@@ -315,6 +428,7 @@ def trends(
         "metric": metric,
         "granularity": granularity,
         "rolling": k if k and k > 1 else None,
+        "skip_reliable_from": skip_from.isoformat() if skip_from else None,
         "buckets": out_rows,
     }
 
@@ -322,14 +436,29 @@ def trends(
 # ---------------------------------------------------------------------------
 # listening clock
 # ---------------------------------------------------------------------------
-def listening_clock(store: HistoryStore, start: DateLike = None, end: DateLike = None) -> dict:
-    """Hour-of-day (0..23) × weekday (Mon..Sun) matrix of play counts.
+def listening_clock(
+    store: HistoryStore, start: DateLike = None, end: DateLike = None,
+    tz: Optional[str] = None,
+) -> dict:
+    """Hour-of-day (0..23) × weekday (Mon..Sun) matrix of play counts, in local time.
 
-    ``matrix[w][h]`` is the number of plays on weekday ``w`` at hour ``h``.
+    ``matrix[w][h]`` is the number of plays on weekday ``w`` at hour ``h``.  The stored
+    ``events`` table derives ``hour``/``weekday`` from the **UTC** timestamp, which would
+    put a 10 PM Eastern play at "2 AM"; here we convert each timestamp to the display
+    timezone (:func:`resolve_tz`; DuckDB ``AT TIME ZONE`` handles DST per-timestamp) so
+    the clock reads in wall-clock local time.  ``tz`` (the resolved IANA name) is returned
+    so the UI can label it.  The stored UTC table is untouched — conversion is query-time.
     """
+    zone = resolve_tz(tz)
     where = _where(_predicates(start, end))
     df = store.query(
-        f"SELECT weekday, hour, COUNT(*) AS c FROM events {where} GROUP BY weekday, hour"
+        f"""
+        SELECT (isodow(ts AT TIME ZONE '{zone}') - 1) AS weekday,
+               hour(ts AT TIME ZONE '{zone}')         AS hour,
+               COUNT(*)                               AS c
+        FROM events {where}
+        GROUP BY 1, 2
+        """
     )
     matrix = [[0 for _ in range(24)] for _ in range(7)]
     for _, r in df.iterrows():
@@ -342,6 +471,7 @@ def listening_clock(store: HistoryStore, start: DateLike = None, end: DateLike =
         "matrix": matrix,
         "max": mx,
         "total": total,
+        "tz": zone,
     }
 
 

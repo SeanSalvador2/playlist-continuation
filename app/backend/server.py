@@ -175,7 +175,7 @@ def create_app(warm: bool = True) -> FastAPI:
     @app.get("/api/history/trends")
     def history_trends(
         metric: str = Query("plays", pattern="^(plays|minutes|discovery|skip_rate)$"),
-        granularity: str = Query("week", pattern="^(day|week|month)$"),
+        granularity: str = Query("week", pattern="^(day|week|month|year)$"),
         start: Optional[str] = None,
         end: Optional[str] = None,
         rolling: Optional[int] = None,
@@ -189,12 +189,13 @@ def create_app(warm: bool = True) -> FastAPI:
         return payload
 
     @app.get("/api/history/clock")
-    def history_clock(start: Optional[str] = None, end: Optional[str] = None) -> dict:
-        return get_history_atlas().listening_clock(start=start, end=end)
+    def history_clock(start: Optional[str] = None, end: Optional[str] = None,
+                      tz: Optional[str] = None) -> dict:
+        return get_history_atlas().listening_clock(start=start, end=end, tz=tz)
 
     @app.get("/api/history/axes")
     def history_axes(
-        granularity: str = Query("week", pattern="^(day|week|month)$"),
+        granularity: str = Query("week", pattern="^(day|week|month|year)$"),
         start: Optional[str] = None,
         end: Optional[str] = None,
     ) -> dict:
@@ -224,8 +225,9 @@ def create_app(warm: bool = True) -> FastAPI:
         group_by: str = Query("weekday", pattern="^(weekday|hour_band|month)$"),
         start: Optional[str] = None,
         end: Optional[str] = None,
+        tz: Optional[str] = None,
     ) -> dict:
-        return get_history_atlas().habits(group_by=group_by, start=start, end=end)
+        return get_history_atlas().habits(group_by=group_by, start=start, end=end, tz=tz)
 
     # ---- journey (Phase 4: trajectory + named eras + fact-checked story) ---- #
     @app.get("/api/history/journey")
