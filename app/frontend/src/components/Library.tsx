@@ -363,11 +363,28 @@ function Header({ summary }: { summary: HistorySummary }) {
         <Stat label="Minutes" num={fmt(Math.round(s.total_minutes))}
               sub={`${Math.round(s.total_minutes / 60).toLocaleString()} hours of listening`} />
         <Stat label="Artists" num={fmt(s.distinct_artists)} sub={`${fmt(s.distinct_tracks)} distinct tracks`} />
-        <Stat label="Skip rate" num={`${Math.round(s.skip_rate * 100)}%`}
-              sub={s.skip_flagged ? `of ${fmt(s.skip_flagged)} flagged plays` : "no skip data"} />
+        <SkipStat summary={s} />
       </div>
     </div>
   );
+}
+
+// Skip rate is honest about Spotify's late-arriving skip flag: null before logging began,
+// and captioned with the month it started + how much of the window it covers.
+function SkipStat({ summary: s }: { summary: HistorySummary }) {
+  const monthLabel = (iso: string | null) =>
+    iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined,
+      { month: "short", year: "numeric", timeZone: "UTC" }) : null;
+  if (s.skip_rate == null) {
+    return <Stat label="Skip rate" num="—"
+                 sub={s.skip_reason ?? "no skip data in this window"} />;
+  }
+  const from = monthLabel(s.skip_reliable_from);
+  const partial = s.skip_coverage > 0 && s.skip_coverage < 0.999;
+  const sub = from
+    ? `since ${from}${partial ? ` · ${Math.round(s.skip_coverage * 100)}% of plays` : ""}`
+    : `of ${fmt(s.skip_flagged)} flagged plays`;
+  return <Stat label="Skip rate" num={`${Math.round(s.skip_rate * 100)}%`} sub={sub} />;
 }
 
 function Stat({ label, num, sub }: { label: string; num: string; sub: string }) {
@@ -533,7 +550,7 @@ type Metric = "plays" | "minutes" | "discovery" | "skip_rate";
 const METRIC_LABEL: Record<Metric, string> = {
   plays: "Plays", minutes: "Minutes", discovery: "Discovery rate", skip_rate: "Skip rate",
 };
-type Gran = "day" | "week" | "month";
+type Gran = "day" | "week" | "month" | "year";
 
 function TrendsPanel({ window }: { window: Window }) {
   const { mode } = useTheme();
@@ -549,19 +566,29 @@ function TrendsPanel({ window }: { window: Window }) {
 
   const isShare = metric === "discovery" || metric === "skip_rate";
   const buckets = data?.buckets ?? [];
+  // Bug 1: for skip_rate, buckets before Spotify began logging skips carry a null value;
+  // find where real data starts so we can grey that region and drop the null points.
+  const reliableFrom = metric === "skip_rate" ? data?.skip_reliable_from ?? null : null;
+  const firstReliableIdx = useMemo(() => {
+    if (metric !== "skip_rate") return -1;
+    const i = buckets.findIndex((b) => b.value != null);
+    return i;
+  }, [buckets, metric]);
+  const reliableMonth = reliableFrom
+    ? new Date(`${reliableFrom}T00:00:00Z`).toLocaleDateString(undefined,
+        { month: "long", year: "numeric", timeZone: "UTC" })
+    : null;
+
   const lines = useMemo(() => {
-    const raw = {
-      name: METRIC_LABEL[metric],
-      color: HONEST[mode],
-      points: buckets.map((b, i) => ({ x: i, y: b.value })),
-    };
+    // Drop null buckets from the plotted points (null y would break the path); the greyed
+    // region + caption below explain the gap for the pre-logging skip period.
+    const pts = (pick: (b: Trends["buckets"][number]) => number | null | undefined) =>
+      buckets.map((b, i) => ({ x: i, y: pick(b) }))
+             .filter((p): p is { x: number; y: number } => p.y != null);
+    const raw = { name: METRIC_LABEL[metric], color: HONEST[mode], points: pts((b) => b.value) };
     const out = [raw];
     if (rolling && buckets.some((b) => b.rolling != null)) {
-      out.push({
-        name: "rolling mean",
-        color: SERIES[mode][2],
-        points: buckets.map((b, i) => ({ x: i, y: b.rolling ?? 0 })),
-      });
+      out.push({ name: "rolling mean", color: SERIES[mode][2], points: pts((b) => b.rolling) });
     }
     return out;
   }, [buckets, metric, mode, rolling]);
@@ -579,7 +606,7 @@ function TrendsPanel({ window }: { window: Window }) {
             ))}
           </span>
           <span className="seg" role="group" aria-label="Granularity">
-            {(["day", "week", "month"] as Gran[]).map((g) => (
+            {(["day", "week", "month", "year"] as Gran[]).map((g) => (
               <button key={g} aria-pressed={gran === g} onClick={() => setGran(g)}>{g}</button>
             ))}
           </span>
@@ -595,6 +622,8 @@ function TrendsPanel({ window }: { window: Window }) {
           yMax={isShare ? 1 : undefined}
           xTicks={tickIndices(buckets.length)}
           lines={lines}
+          shadeUntilX={firstReliableIdx > 0 ? firstReliableIdx - 0.5 : undefined}
+          shadeLabel={firstReliableIdx > 0 ? "no skip data" : undefined}
         />
       ) : <p className="hint">No plays in this window.</p>}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, gap: 10, flexWrap: "wrap" }}>
@@ -602,7 +631,9 @@ function TrendsPanel({ window }: { window: Window }) {
           {metric === "discovery"
             ? "Discovery = share of plays that were the first-ever play of that track (measured across the full history)."
             : metric === "skip_rate"
-            ? "Skip rate = share of skip-flagged plays that were skips."
+            ? (reliableMonth
+                ? `Skip rate = share of skip-flagged plays that were skips. Spotify began recording skips in ${reliableMonth}; earlier plays (greyed) show no skip data.`
+                : "Skip rate = share of skip-flagged plays that were skips. Spotify recorded no skips in this history.")
             : `${METRIC_LABEL[metric]} per ${gran}.`}
         </p>
         <a className="btn ghost" href={csvUrl} download={`trend_${metric}_${gran}.csv`}>Download CSV</a>
@@ -626,7 +657,12 @@ function ClockPanel({ window }: { window: Window }) {
   useEffect(() => { api.historyClock(window).then(setData); }, [window]);
   return (
     <section className="card card-pad" aria-label="Listening clock">
-      <div className="card-title">Listening clock <span className="hint">plays by weekday × hour</span></div>
+      <div className="card-title">
+        Listening clock
+        <span className="hint">
+          plays by weekday × hour{data?.tz ? ` · times shown in ${data.tz}` : ""}
+        </span>
+      </div>
       {data && data.total ? (
         <ClockHeatmap weekdays={data.weekdays} hours={data.hours} matrix={data.matrix} max={data.max} />
       ) : <p className="hint">No plays in this window.</p>}
@@ -682,7 +718,7 @@ function AxesPanel({ window, config }: { window: Window; config: Config }) {
       <div className="card-title">
         Taste axes over time
         <span className="seg" role="group" aria-label="Axes granularity">
-          {(["week", "month"] as Gran[]).map((g) => (
+          {(["week", "month", "year"] as Gran[]).map((g) => (
             <button key={g} aria-pressed={gran === g} onClick={() => setGran(g)}>{g}</button>
           ))}
         </span>

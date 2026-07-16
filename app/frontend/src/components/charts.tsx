@@ -340,11 +340,14 @@ export function TrajectoryChart({
 //  Line chart — trust curves (honest vs adversarial)
 // ==========================================================================
 export function LineChart({
-  lines, xLabel, yLabel, yMax, xTicks,
+  lines, xLabel, yLabel, yMax, xTicks, shadeUntilX, shadeLabel,
 }: {
   lines: { name: string; color: string; points: { x: number; y: number }[] }[];
   xLabel: string; yLabel: string; yMax?: number;
   xTicks?: number[];
+  // Optional greyed region from the left edge to this x (data-space) — used to mark a
+  // period with no data (e.g. plays before Spotify began recording skips).
+  shadeUntilX?: number; shadeLabel?: string;
 }) {
   const { mode } = useTheme();
   const ink = chartInk(mode);
@@ -355,17 +358,33 @@ export function LineChart({
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const allY = lines.flatMap((l) => l.points.map((p) => p.y));
   const ymax = yMax ?? Math.max(...allY, 0.1) * 1.1;
-  const xs = lines[0]?.points.map((p) => p.x) ?? [];
-  const xmin = Math.min(...xs, 0), xmax = Math.max(...xs, 1);
+  const ticks = xTicks ?? lines[0]?.points.map((p) => p.x) ?? [];
+  // Range over both plotted points AND the tick set, so a series with gaps (filtered
+  // null buckets) still spans the full axis and any shaded region lands correctly.
+  const xsAll = [...lines.flatMap((l) => l.points.map((p) => p.x)), ...ticks];
+  const xmin = Math.min(...xsAll, 0), xmax = Math.max(...xsAll, 1);
   const X = (x: number) => padL + ((x - xmin) / (xmax - xmin || 1)) * plotW;
   const Y = (y: number) => padT + plotH - (y / ymax) * plotH;
-  const ticks = xTicks ?? xs;
+  const shadeX = shadeUntilX != null
+    ? Math.max(padL, Math.min(padL + plotW, X(shadeUntilX))) : null;
 
   return (
     <figure style={{ margin: 0 }}>
       <div style={{ position: "relative" }}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img"
              aria-label={`Line chart of ${yLabel} versus ${xLabel}`}>
+          {shadeX != null && shadeX > padL && (
+            <g>
+              <rect x={padL} y={padT} width={shadeX - padL} height={plotH}
+                    fill={ink.muted} opacity={0.12} />
+              <line x1={shadeX} x2={shadeX} y1={padT} y2={padT + plotH}
+                    stroke={ink.muted} strokeWidth={1} strokeDasharray="3 3" />
+              {shadeLabel && (
+                <text x={padL + 6} y={padT + 12} fontSize={10} fill={ink.muted}
+                      fontFamily="var(--font-mono)">{shadeLabel}</text>
+              )}
+            </g>
+          )}
           {[0, 0.25, 0.5, 0.75, 1].map((t) => {
             const y = padT + plotH - t * plotH;
             return (

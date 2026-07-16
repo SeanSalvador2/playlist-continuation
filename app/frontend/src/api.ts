@@ -126,7 +126,9 @@ export interface HistorySummary {
   span: Span | null;
   total_plays: number; total_minutes: number;
   distinct_tracks: number; distinct_artists: number;
-  skip_flagged: number; skip_rate: number; plays_per_day: number;
+  skip_flagged: number; skip_rate: number | null; plays_per_day: number;
+  // Bug 1: skip logging began partway through many real histories; these caveat the rate.
+  skip_reliable_from: string | null; skip_coverage: number; skip_reason: string | null;
   provenance: string; provenance_label: string; is_synthetic: boolean;
   full_span: Span | null;
   ground_truth: {
@@ -144,12 +146,16 @@ export interface TopItems {
   total_plays: number; total_minutes: number;
   offset: number; limit: number; rows: TopRow[];
 }
-export interface TrendBucket { bucket: string; value: number; rolling?: number | null }
+export interface TrendBucket { bucket: string; value: number | null; rolling?: number | null }
 export interface Trends {
-  metric: string; granularity: string; rolling: number | null; buckets: TrendBucket[];
+  metric: string; granularity: string; rolling: number | null;
+  // Bug 1: first day the skip flag is trustworthy (skip_rate metric only, else null).
+  skip_reliable_from: string | null;
+  buckets: TrendBucket[];
 }
 export interface Clock {
   weekdays: string[]; hours: number[]; matrix: number[][]; max: number; total: number;
+  tz: string;  // Bug 2: IANA zone the hour/weekday were computed in
 }
 export interface AxesOverTime {
   granularity: string; axes: string[];

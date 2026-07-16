@@ -510,11 +510,12 @@ table.lib-table td, table.lib-table th { padding: 8px 12px; }
 .era-prov { font-size: 10.5px; padding: 2px 7px; }
 .era-name {
   font-family: var(--font-display); font-size: 15px; font-weight: 600; line-height: 1.25;
-  margin: 0; color: var(--ink);
+  margin: 0; color: var(--ink); overflow-wrap: anywhere;
 }
 .era-dates { font-size: 11px; color: var(--muted); }
 .era-artists { display: flex; flex-wrap: wrap; gap: 5px; }
-.era-artists .chip { padding: 3px 9px; font-size: 11px; }
+/* real artist/track names can be very long; keep the pill inside the card */
+.era-artists .chip { padding: 3px 9px; font-size: 11px; max-width: 100%; overflow-wrap: anywhere; }
 .era-foot { font-size: 11px; color: var(--muted); }
 
 .mini-axes { display: flex; flex-direction: column; gap: 4px; }
